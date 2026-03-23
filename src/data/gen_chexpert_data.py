@@ -137,14 +137,10 @@ def build_adj_matrix(csv_path, out_path='data/chexpert_adj.pkl', uncertain='zero
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Generate CheXpert auxiliary data')
-    p.add_argument('--csv',   default='CheXpert-v1.0-small/train.csv',
-                   help='Path to CheXpert train.csv')
-    p.add_argument('--glove', default=None,
-                   help='Path to GloVe 300d file (optional)')
-    p.add_argument('--uncertain', default='zeros', choices=['zeros', 'ones'],
-                   help='How to handle uncertain(-1) labels when building adj')
-    p.add_argument('--out_dir', default='data',
-                   help='Output directory')
+    p.add_argument('--csv',   default='CheXpert-v1.0-small/train.csv', help='Path to CheXpert train.csv')
+    p.add_argument('--glove', default=None, help='Path to GloVe 300d file (optional)')
+    p.add_argument('--uncertain', default='zeros', choices=['zeros', 'ones'], help='How to handle uncertain(-1) labels when building adj')
+    p.add_argument('--out_dir', default='data', help='Output directory')
     args = p.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
