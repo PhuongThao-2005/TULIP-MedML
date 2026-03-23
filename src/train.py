@@ -1,4 +1,3 @@
-# src/train.py
 import argparse, yaml, os, sys, torch, torch.nn as nn
 
 # Thêm root vào path để import src.*

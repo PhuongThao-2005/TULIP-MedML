@@ -1,0 +1,34 @@
+name: C1_smoke_test
+seed: 42
+
+data:
+  root:      /kaggle/input/datasets/ashery/chexpert
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small.csv
+  val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
+  adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
+  uncertain: zeros
+  img_size:  448
+
+model:
+  backbone:   resnet101
+  pretrained: true
+  gcn_in:     300
+  t:          0.4
+
+loss:
+  type: bce
+
+train:
+  epochs:      1
+  batch_size:  16
+  lr:          0.01
+  lrp:         0.1
+  momentum:    0.9
+  weight_decay: 1e-4
+  epoch_step:  [30]
+  workers:     4
+
+output:
+  save_dir: /kaggle/working/checkpoints/c1
+  log_dir:  /kaggle/working/logs/c1

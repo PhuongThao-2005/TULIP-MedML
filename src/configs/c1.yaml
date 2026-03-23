@@ -4,10 +4,10 @@ seed: 42
 
 data:
   root:       /kaggle/input/datasets/ashery/chexpert
-  train_csv:  /kaggle/working/data/train_split.csv   # dùng split đã stratified
-  val_csv:    /kaggle/working/data/val_split.csv
-  word_vec:   /kaggle/working/data/word_vec.npy
-  adj:        /kaggle/working/data/adj.pkl
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small.csv
+  val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
+  adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
   uncertain:  zeros          # zeros | ones | ignore
   img_size:   448
 
