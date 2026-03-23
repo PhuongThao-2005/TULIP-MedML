@@ -4,7 +4,7 @@ import argparse, yaml, os, sys, torch, torch.nn as nn
 # Thêm root vào path để import src.*
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data.dataset import CheXpert, NUM_CLASSES
+from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.models.gcn   import gcn_resnet101
 from src.engine       import GCNMultiLabelMAPEngine
 
