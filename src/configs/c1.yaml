@@ -1,0 +1,39 @@
+# Config C1: ResNet-101 + GloVe + BCE
+name: C1_baseline
+seed: 42
+
+data:
+  root:       /kaggle/input/datasets/ashery/chexpert
+  train_csv:  /kaggle/working/data/train_split.csv   # dùng split đã stratified
+  val_csv:    /kaggle/working/data/val_split.csv
+  word_vec:   /kaggle/working/data/word_vec.npy
+  adj:        /kaggle/working/data/adj.pkl
+  uncertain:  zeros          # zeros | ones | ignore
+  img_size:   448
+
+model:
+  backbone:   resnet101      # resnet101 | swin_t
+  pretrained: true
+  gcn_in:     300            # word vec dim
+  t:          0.4            # adj threshold
+
+loss:
+  type:       bce            # bce | ua_asl
+  # ua_asl params (chỉ dùng cho C4/C5)
+  gamma_pos:  0
+  gamma_neg:  4
+  lambda_unc: 0.5
+
+train:
+  epochs:     40
+  batch_size: 16
+  lr:         0.01
+  lrp:        0.1            # backbone lr = lr * lrp
+  momentum:   0.9
+  weight_decay: 1e-4
+  epoch_step: [30]           # lr *= 0.1 tại epoch này
+  workers:    4
+
+output:
+  save_dir:   /kaggle/working/checkpoints/c1
+  log_dir:    /kaggle/working/logs/c1
