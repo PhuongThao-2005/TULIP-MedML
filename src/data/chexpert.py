@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -6,7 +8,6 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
-from torchvision import transforms
 
 
 CHEXPERT_CLASSES = [
@@ -17,16 +18,6 @@ CHEXPERT_CLASSES = [
 ]
 
 NUM_CLASSES = len(CHEXPERT_CLASSES)
-
-
-# ================= CONFIG =================
-EXPERIMENT_CONFIG = {
-    'c1': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
-    'c2': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
-    # 'c3': {'inp': '../data/chexpert_biomedclip_word2vec.npy', 'policy': 'zeros', 'dim': 512},
-    'c4': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'keep',  'dim': 300},
-    # 'c5': {'inp': '../data/chexpert_biomedclip_word2vec.npy', 'policy': 'keep',  'dim': 512},
-}
 
 
 # ================= TRANSFORM =================
@@ -60,60 +51,74 @@ class CheXpertDataset(Dataset):
         self,
         root: str,
         csv_file: str,
+        inp_name: Optional[str] = None,
         label_policy: str = 'zeros',
+        uncertain: Optional[str] = None,
         transform=None,
+        target_transform=None,
     ):
-        assert label_policy in ('zeros', 'keep')
+        policy = uncertain if uncertain is not None else label_policy
+        assert policy in ('zeros', 'ones', 'ignore', 'keep')
 
         self.root = root
-        self.label_policy = label_policy
-        self.transform = transform or get_transform()
+        self.label_policy = policy
+        self.transform = transform
+        self.target_transform = target_transform
 
-        # Load CSV
         csv_path = csv_file if os.path.isabs(csv_file) \
             else os.path.join(root, csv_file)
+        inp_path = inp_name if inp_name and os.path.isabs(inp_name) \
+            else os.path.join(root, inp_name) if inp_name else None
 
-        df = pd.read_csv(csv_path)
-        print(f'[CheXpert] {len(df)} samples | policy={label_policy}')
+        self.df = pd.read_csv(csv_path)
+        print(f'[CheXpert] {len(self.df)} samples | policy={self.label_policy}')
 
-        # Labels
-        label_df = df[CHEXPERT_CLASSES].fillna(0)
-
-        if label_policy == 'zeros':
-            label_df = label_df.replace(-1, 0)
-
-        self.labels = label_df.values.astype(np.float32)
-        self.paths = df['Path'].tolist()
-
-        if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),  
-            ])
+        if inp_path:
+            self.inp = torch.from_numpy(np.load(inp_path).astype(np.float32))
         else:
-            self.transform = transform
+            self.inp = torch.zeros((NUM_CLASSES, 300), dtype=torch.float32)
+
+        if self.transform is None:
+            self.transform = get_transform(split='train')
 
     def __len__(self):
-        return len(self.paths)
+        return len(self.df)
 
     def _resolve_path(self, path):
         return os.path.join(self.root, path.replace('\\', '/').lstrip('./'))
 
+    def _prepare_labels(self, row):
+        labels = row[CHEXPERT_CLASSES].fillna(0).values.astype(np.float32)
+
+        if self.label_policy == 'zeros':
+            labels[labels == -1] = 0
+        elif self.label_policy == 'ones':
+            labels[labels == -1] = 1
+
+        return labels
+
     def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        path = row['Path']
+
         img = Image.open(
-            self._resolve_path(self.paths[idx])
+            self._resolve_path(path)
         ).convert('RGB')
 
-        img = self.transform(img) 
+        img = self.transform(img)
 
-        label = torch.from_numpy(self.labels[idx])
+        label = torch.from_numpy(self._prepare_labels(row))
+        if self.target_transform is not None:
+            label = self.target_transform(label)
 
-        return img, label
+        # Engine expects (image, path, word_vec) as input tuple.
+        return (img, path, self.inp), label
 
     def label_stats(self):
         stats = {}
+        label_df = self.df[CHEXPERT_CLASSES].fillna(0).copy()
         for i, name in enumerate(CHEXPERT_CLASSES):
-            col = self.labels[:, i]
+            col = label_df.iloc[:, i].to_numpy()
             stats[name] = {
                 'pos': int((col == 1).sum()),
                 'neg': int((col == 0).sum()),
@@ -122,25 +127,23 @@ class CheXpertDataset(Dataset):
         return stats
 
 
+# Alias giữ tương thích import trong train.py
+CheXpert = CheXpertDataset
+
+
 # ================= FACTORY =================
-def build_dataset(exp, root, csv_file, split='train'):
-    assert exp in EXPERIMENT_CONFIG
-
-    cfg = EXPERIMENT_CONFIG[exp]
-
-    print(f'[build_dataset] {exp.upper()} | {split} | {cfg["policy"]}')
-
+def build_dataset(
+    root,
+    csv_file,
+    inp_name,
+    split='train',
+    uncertain='zeros',
+):
     ds = CheXpertDataset(
         root=root,
         csv_file=csv_file,
-        label_policy=cfg['policy'],
-        transform=get_transform(split)
+        inp_name=inp_name,
+        uncertain=uncertain,
+        transform=get_transform(split),
     )
-
-    emb = torch.from_numpy(
-        np.load(cfg['inp']).astype(np.float32)
-    )
-
-    print(f'[embedding] shape={emb.shape}')
-
-    return ds, emb
+    return ds, ds.inp
