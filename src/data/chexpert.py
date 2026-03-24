@@ -6,6 +6,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
+from torchvision import transforms
 
 
 CHEXPERT_CLASSES = [
@@ -83,6 +84,14 @@ class CheXpertDataset(Dataset):
 
         self.labels = label_df.values.astype(np.float32)
         self.paths = df['Path'].tolist()
+
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),  
+            ])
+        else:
+            self.transform = transform
 
     def __len__(self):
         return len(self.paths)
