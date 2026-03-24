@@ -21,11 +21,11 @@ NUM_CLASSES = len(CHEXPERT_CLASSES)
 
 # ================= CONFIG =================
 EXPERIMENT_CONFIG = {
-    'c1': {'inp': 'data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
-    'c2': {'inp': 'data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
-    'c3': {'inp': 'data/chexpert_biomedclip_word2vec.npy', 'policy': 'zeros', 'dim': 512},
-    'c4': {'inp': 'data/chexpert_glove_word2vec.npy', 'policy': 'keep',  'dim': 300},
-    'c5': {'inp': 'data/chexpert_biomedclip_word2vec.npy', 'policy': 'keep',  'dim': 512},
+    'c1': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
+    'c2': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'zeros', 'dim': 300},
+    # 'c3': {'inp': '../data/chexpert_biomedclip_word2vec.npy', 'policy': 'zeros', 'dim': 512},
+    'c4': {'inp': '../data/chexpert_glove_word2vec.npy', 'policy': 'keep',  'dim': 300},
+    # 'c5': {'inp': '../data/chexpert_biomedclip_word2vec.npy', 'policy': 'keep',  'dim': 512},
 }
 
 
