@@ -85,11 +85,21 @@ class CheXpertDataset(Dataset):
         return len(self.df)
 
     def _resolve_path(self, path):
-        return os.path.join(self.root, path.replace('\\', '/').lstrip('./'))
+        path = path.replace('\\', '/')
+
+        path = path.replace('CheXpert-v1.0-small/', '')
+        if '/._' in path:
+            return None
+
+        return os.path.join(self.root, path)
 
     def _prepare_labels(self, row):
-        labels = row[CHEXPERT_CLASSES].fillna(0).values.astype(np.float32)
-
+        labels = (
+            row[CHEXPERT_CLASSES]
+            .astype(float)
+            .fillna(0)
+            .values.astype(np.float32)
+        )
         if self.label_policy == 'zeros':
             labels[labels == -1] = 0
         elif self.label_policy == 'ones':
@@ -101,17 +111,19 @@ class CheXpertDataset(Dataset):
         row = self.df.iloc[idx]
         path = row['Path']
 
-        img = Image.open(
-            self._resolve_path(path)
-        ).convert('RGB')
+        img_path = self._resolve_path(path)
 
+        if img_path is None or not os.path.exists(img_path):
+            # skip sample lỗi
+            return self.__getitem__((idx + 1) % len(self.df))
+
+        img = Image.open(img_path).convert('RGB')
         img = self.transform(img)
 
         label = torch.from_numpy(self._prepare_labels(row))
         if self.target_transform is not None:
             label = self.target_transform(label)
 
-        # Engine expects (image, path, word_vec) as input tuple.
         return (img, path, self.inp), label
 
     def label_stats(self):
