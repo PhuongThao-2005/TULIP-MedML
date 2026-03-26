@@ -12,9 +12,9 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 
-from util import Warp, MultiScaleCrop, AveragePrecisionMeter
+from src.util import Warp, MultiScaleCrop, AveragePrecisionMeter
 
-from evaluate import (
+from src.evaluate import (
     compute_AUC_uncertain,
     compute_mAP,
     compute_mean_AUC,
@@ -205,22 +205,27 @@ class Engine:
             pin_memory=self.state['use_gpu'],
         )
 
-        # Resume từ checkpoint nếu có
-        if self._state('resume') is not None:
-            if os.path.isfile(self.state['resume']):
-                print("=> loading checkpoint '{}'".format(self.state['resume']))
-                checkpoint = torch.load(self.state['resume'])
-                self.state['start_epoch'] = checkpoint['epoch']
-                self.state['best_score']  = checkpoint['best_score']
-                model.load_state_dict(checkpoint['state_dict'])
-                print("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
-            else:
-                print("=> no checkpoint found at '{}'".format(self.state['resume']))
-
         if self.state['use_gpu']:
             # DataParallel tự phân chia batch qua nhiều GPU nếu có
             model = torch.nn.DataParallel(
                 model, device_ids=self.state['device_ids']).cuda()
+
+        # Resume từ checkpoint nếu có
+        if self._state('resume') is not None:
+            if os.path.isfile(self.state['resume']):
+                print("=> loading checkpoint '{}'".format(self.state['resume']))
+                checkpoint = torch.load(self.state['resume'], map_location='cpu')
+
+                self.state['start_epoch'] = checkpoint['epoch'] + 1
+                self.state['best_score']  = checkpoint['best_score']
+
+                model.load_state_dict(checkpoint['state_dict'])
+                
+                if optimizer is not None and 'optimizer' in checkpoint:
+                    optimizer.load_state_dict(checkpoint['optimizer'])
+                print("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
+            else:
+                print("=> no checkpoint found at '{}'".format(self.state['resume']))
 
         if self.state['evaluate']:
             # Chỉ chạy validate một lần rồi thoát
@@ -239,11 +244,12 @@ class Engine:
             is_best = score > self.state['best_score']
             self.state['best_score'] = max(score, self.state['best_score'])
             self.save_checkpoint({
-                'epoch'     : epoch + 1,
+                'epoch'     : epoch,
                 'arch'      : self._state('arch'),
                 'state_dict': model.module.state_dict()
                                if hasattr(model, 'module') else model.state_dict(),
                 'best_score': self.state['best_score'],
+                'optimizer' : optimizer.state_dict()
             }, is_best)
             print('best score:', self.state['best_score'])
 
@@ -314,8 +320,9 @@ class Engine:
 
         return self.on_end_epoch(False, model, criterion, data_loader)
 
-    def save_checkpoint(self, state, is_best,
-                        filename='checkpoint.pth.tar'):
+    def save_checkpoint(self, state, is_best, filename=None):
+        if filename is None:
+            filename = f'checkpoint_epoch_{state["epoch"]}.pth.tar'
         if self._state('save_model_path') is not None:
             filename_ = filename
             filename  = os.path.join(self.state['save_model_path'], filename_)
