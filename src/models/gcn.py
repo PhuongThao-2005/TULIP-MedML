@@ -41,7 +41,7 @@ class GraphConvolution(nn.Module):
 
 
 class GCNResnet(nn.Module):
-    def __init__(self, model, num_classes, in_channel=300, t=0, adj_file=None):
+    def __init__(self, model, num_classes, in_channel=300, t=0, adj_file=None, inp_file=None):
         super(GCNResnet, self).__init__()
         self.features = nn.Sequential(
             model.conv1,
@@ -54,7 +54,7 @@ class GCNResnet(nn.Module):
             model.layer4,
         )
         self.num_classes = num_classes
-        self.pooling = nn.MaxPool2d(14, 14)
+        self.pooling = nn.AdaptiveAvgPool2d((1, 1))
 
         self.gc1 = GraphConvolution(in_channel, 1024)
         self.gc2 = GraphConvolution(1024, 2048)
@@ -67,15 +67,20 @@ class GCNResnet(nn.Module):
         self.image_normalization_mean = [0.485, 0.456, 0.406]
         self.image_normalization_std = [0.229, 0.224, 0.225]
 
-    def forward(self, feature, inp):
-        # feature: (B, 3, H, W)  inp: (C, 300)
+        if inp_file:
+            inp = torch.from_numpy(
+                np.load(inp_file).astype(np.float32))  # (14, 300)
+        else:
+            inp = torch.zeros(num_classes, in_channel)
+        self.register_buffer('inp', inp)
+
+    def forward(self, feature):
         feature = self.features(feature)
         feature = self.pooling(feature)
         feature = feature.view(feature.size(0), -1)   # (B, 2048)
 
-        inp = inp[0]   # dataset trả (img, path, inp) → inp là element thứ 3 của tuple; engine đã tách ra
         adj = gen_adj(self.A).detach()
-        x = self.gc1(inp, adj)    # (C, 1024)
+        x = self.gc1(self.inp, adj)    # (C, 1024)
         x = self.relu(x)
         x = self.gc2(x, adj)      # (C, 2048)
         x = self.relu(x)
@@ -92,6 +97,6 @@ class GCNResnet(nn.Module):
         ]
 
 
-def gcn_resnet101(num_classes, t, pretrained=False, adj_file=None, in_channel=300):
+def gcn_resnet101(num_classes, t, pretrained=False, adj_file=None, in_channel=300, inp_file=None):
     model = models.resnet101(pretrained=pretrained)
-    return GCNResnet(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel)
+    return GCNResnet(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)

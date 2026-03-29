@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
 from src.models.gcn import gcn_resnet101
-from evaluate import evaluate, print_metrics
+from src.evaluate import evaluate, print_metrics
 
 
 def load_cfg(path: str) -> dict:
@@ -79,6 +79,7 @@ def main():
         pretrained=cfg['model']['pretrained'],
         adj_file=cfg['data']['adj'],
         in_channel=cfg['model']['gcn_in'],
+        inp_file=cfg['data']['word_vec'],
     )
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────

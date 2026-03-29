@@ -41,7 +41,6 @@ class _AverageMeter:
         self.avg = self.sum / self.count
 
     def value(self):
-        # Torchnet-compatible: (mean, std).  std not tracked → 0.
         return (self.avg, 0.0)
 
 
@@ -55,7 +54,8 @@ class Engine:
         on_start_epoch → on_start_batch → on_forward → on_end_batch → on_end_epoch
 
     GCNMultiLabelMAPEngine overrides on_start_batch (unpack tuple + remap
-    labels) and on_forward (two-input GCN forward pass).
+    labels) and on_forward (single-input GCN forward pass — inp is a model
+    buffer, not a dataset field).
     """
 
     def __init__(self, state: dict = {}):
@@ -73,6 +73,7 @@ class Engine:
             'epoch_step'  : [],     # epochs at which to decay lr × 0.1
             'use_pb'      : True,
             'print_freq'  : 0,
+            # 'loss_type' : 'bce'  ← caller sets this via state dict
         }
         for k, v in defaults.items():
             if self._state(k) is None:
@@ -109,26 +110,28 @@ class Engine:
         if display and self.state['print_freq'] != 0 \
                 and self.state['iteration'] % self.state['print_freq'] == 0:
             loss = self.state['meter_loss'].avg
-            bt   = self.state['batch_time'].avg
-            dt   = self.state['data_time'].avg
             if training:
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {btc:.3f} ({bt:.3f})\t'
                       'Data {dtc:.3f} ({dt:.3f})\t'
                       'Loss {lc:.4f} ({l:.4f})'.format(
                     self.state['epoch'], self.state['iteration'], len(data_loader),
-                    btc=self.state['batch_time_current'], bt=bt,
-                    dtc=self.state['data_time_batch'],    dt=dt,
-                    lc=self.state['loss_batch'],           l=loss))
+                    btc=self.state['batch_time_current'],
+                    bt=self.state['batch_time'].avg,
+                    dtc=self.state['data_time_batch'],
+                    dt=self.state['data_time'].avg,
+                    lc=self.state['loss_batch'], l=loss))
             else:
                 print('Test: [{0}/{1}]\t'
                       'Time {btc:.3f} ({bt:.3f})\t'
                       'Data {dtc:.3f} ({dt:.3f})\t'
                       'Loss {lc:.4f} ({l:.4f})'.format(
                     self.state['iteration'], len(data_loader),
-                    btc=self.state['batch_time_current'], bt=bt,
-                    dtc=self.state['data_time_batch'],    dt=dt,
-                    lc=self.state['loss_batch'],           l=loss))
+                    btc=self.state['batch_time_current'],
+                    bt=self.state['batch_time'].avg,
+                    dtc=self.state['data_time_batch'],
+                    dt=self.state['data_time'].avg,
+                    lc=self.state['loss_batch'], l=loss))
 
     def on_forward(self, training, model, criterion, data_loader,
                    optimizer=None, display=True):
@@ -151,12 +154,11 @@ class Engine:
         Gọi mean/std từ model thay vì hardcode → mỗi backbone có thể dùng
         chuẩn hóa khác nhau (ImageNet, BiomedCLIP, etc.)
         """
+        mean = getattr(model, 'image_normalization_mean', [0.485, 0.456, 0.406])
+        std  = getattr(model, 'image_normalization_std',  [0.229, 0.224, 0.225])
+        normalize = transforms.Normalize(mean=mean, std=std)
+
         if self._state('train_transform') is None:
-            mean = getattr(model, 'image_normalization_mean',
-                           [0.485, 0.456, 0.406])
-            std  = getattr(model, 'image_normalization_std',
-                           [0.229, 0.224, 0.225])
-            normalize = transforms.Normalize(mean=mean, std=std)
             self.state['train_transform'] = transforms.Compose([
                 MultiScaleCrop(self.state['image_size'],
                                scales=(1.0, 0.875, 0.75, 0.66, 0.5),
@@ -167,11 +169,6 @@ class Engine:
             ])
 
         if self._state('val_transform') is None:
-            mean = getattr(model, 'image_normalization_mean',
-                           [0.485, 0.456, 0.406])
-            std  = getattr(model, 'image_normalization_std',
-                           [0.229, 0.224, 0.225])
-            normalize = transforms.Normalize(mean=mean, std=std)
             self.state['val_transform'] = transforms.Compose([
                 Warp(self.state['image_size']),
                 transforms.ToTensor(),
@@ -206,7 +203,6 @@ class Engine:
         )
 
         if self.state['use_gpu']:
-            # DataParallel tự phân chia batch qua nhiều GPU nếu có
             model = torch.nn.DataParallel(
                 model, device_ids=self.state['device_ids']).cuda()
 
@@ -215,12 +211,9 @@ class Engine:
             if os.path.isfile(self.state['resume']):
                 print("=> loading checkpoint '{}'".format(self.state['resume']))
                 checkpoint = torch.load(self.state['resume'], map_location='cpu')
-
                 self.state['start_epoch'] = checkpoint['epoch'] + 1
                 self.state['best_score']  = checkpoint['best_score']
-
                 model.load_state_dict(checkpoint['state_dict'])
-                
                 if optimizer is not None and 'optimizer' in checkpoint:
                     optimizer.load_state_dict(checkpoint['optimizer'])
                 print("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
@@ -228,7 +221,6 @@ class Engine:
                 print("=> no checkpoint found at '{}'".format(self.state['resume']))
 
         if self.state['evaluate']:
-            # Chỉ chạy validate một lần rồi thoát
             self.validate(val_loader, model, criterion)
             return
 
@@ -249,7 +241,7 @@ class Engine:
                 'state_dict': model.module.state_dict()
                                if hasattr(model, 'module') else model.state_dict(),
                 'best_score': self.state['best_score'],
-                'optimizer' : optimizer.state_dict()
+                'optimizer' : optimizer.state_dict(),
             }, is_best)
             print('best score:', self.state['best_score'])
 
@@ -271,7 +263,6 @@ class Engine:
             self.state['input']  = input
             self.state['target'] = target
 
-            # Subclass có thể unpack input tuple, remap labels ở đây
             self.on_start_batch(True, model, criterion, data_loader, optimizer)
 
             if self.state['use_gpu']:
@@ -296,7 +287,6 @@ class Engine:
 
         end = time.time()
         with torch.no_grad():
-            # no_grad: không allocate bộ nhớ cho gradient
             for i, (input, target) in enumerate(data_loader):
                 self.state['iteration']       = i
                 self.state['data_time_batch'] = time.time() - end
@@ -351,11 +341,23 @@ class Engine:
                 self.state['filename_previous_best'] = filename_best
 
     def adjust_learning_rate(self, optimizer):
-        """Decay lr × 0.1 at each epoch listed in state['epoch_step']."""
-        decay = 0.1 if self.state['epoch'] in self.state['epoch_step'] else 1.0
+        """
+        Decay lr × 0.1 tại mỗi epoch trong epoch_step.
+        Tính từ base_lrs gốc thay vì *= để tránh lỗi khi resume.
+        """
+        # Lưu lr gốc lần đầu tiên gọi
+        if 'base_lrs' not in self.state:
+            self.state['base_lrs'] = [pg['lr'] for pg in optimizer.param_groups]
+
+        n_decays = sum(
+            1 for s in self.state['epoch_step']
+            if s <= self.state['epoch']
+        )
+        factor = 0.1 ** n_decays
+
         lr_list = []
-        for pg in optimizer.param_groups:
-            pg['lr'] *= decay
+        for pg, base_lr in zip(optimizer.param_groups, self.state['base_lrs']):
+            pg['lr'] = base_lr * factor
             lr_list.append(pg['lr'])
         return np.unique(lr_list)
 
@@ -365,7 +367,6 @@ class Engine:
 class MultiLabelMAPEngine(Engine):
     """
     Extends Engine với mAP metric cho multi-label classification.
-    Override on_end_epoch để tính và in mAP thay vì chỉ loss.
     """
 
     def __init__(self, state: dict):
@@ -395,7 +396,6 @@ class MultiLabelMAPEngine(Engine):
                        optimizer=None, display=True):
         self.state['target_gt'] = self.state['target'].clone()
 
-        # Unpack input tuple: (img, path)
         input = self.state['input']
         self.state['input'] = input[0]
         self.state['name']  = input[1]
@@ -411,8 +411,6 @@ class MultiLabelMAPEngine(Engine):
         if display and self.state['print_freq'] != 0 \
                 and self.state['iteration'] % self.state['print_freq'] == 0:
             loss = self.state['meter_loss'].avg
-            bt   = self.state['batch_time'].avg
-            dt   = self.state['data_time'].avg
             if training:
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Loss {lc:.4f} ({l:.4f})'.format(
@@ -429,27 +427,24 @@ class MultiLabelMAPEngine(Engine):
 
 class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
     """
-    Extends MultiLabelMAPEngine for GCNResnet.
+    Extends MultiLabelMAPEngine cho GCNResnet.
 
-    Changes vs MultiLabelMAPEngine:
-      1. on_start_batch — unpacks 3-tuple (img, path, word_vec); remaps
-         uncertain labels (-1 → 0) correctly for BCE loss while preserving
-         ground-truth {-1, 0, 1} in target_gt for evaluation.
-      2. on_forward — calls model(img, word_vec) with two inputs.
-      3. on_start_epoch / on_end_batch — accumulate val predictions so that
-         on_end_epoch can compute AUC/mAP via evaluate.py (single pass).
-      4. on_end_epoch (val) — uses evaluate.py metrics and returns mean_auc
-         as the score for checkpoint selection.
+    Thay đổi chính so với phiên bản cũ:
+      1. inp KHÔNG còn trong dataset — model tự load qua register_buffer.
+         on_start_batch chỉ unpack (img, path), không cần lấy inp từ input[2].
+      2. on_start_batch có 2 nhánh remap label tùy loss_type:
+         - 'bce'    : -1 → 0  (uncertain coi như negative cho loss)
+         - 'ua_asl' : giữ nguyên -1 (loss tự xử lý)
+      3. on_forward gọi model(feature) một argument — inp là buffer trong model.
+      4. Checkpoint chọn theo mAP (khớp proposal), fallback mean_auc.
+      5. adjust_learning_rate tính từ base_lrs gốc, không lỗi khi resume.
     """
-
-    # ── Hooks ────────────────────────────────────────────────────────────────
 
     def on_start_epoch(self, training, model, criterion, data_loader,
                        optimizer=None, display=True):
         MultiLabelMAPEngine.on_start_epoch(
             self, training, model, criterion, data_loader, optimizer)
         if not training:
-            # Buffers to accumulate predictions for evaluate.py metrics
             self.state['_val_scores']  = []
             self.state['_val_targets'] = []
 
@@ -458,17 +453,21 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
         # Preserve original labels for evaluation (keeps -1 uncertain)
         self.state['target_gt'] = self.state['target'].clone()
 
-        # Remap for BCEWithLogitsLoss: uncertain (-1) → negative (0).
-        # Positive (1) and explicit negative (0) stay unchanged.
-        target = self.state['target'].clone().float()
-        target[target < 0] = 0.0
-        self.state['target'] = target
+        loss_type = self.state.get('loss_type', 'bce')
 
-        # Unpack (img, path, word_vec) from CheXpertDataset.__getitem__
+        if loss_type == 'bce':
+            # BCE không hiểu -1 → remap uncertain thành negative
+            target = self.state['target'].clone().float()
+            target[target < 0] = 0.0
+            self.state['target'] = target
+        else:
+            # ua_asl nhận -1 trực tiếp, chỉ cast float
+            self.state['target'] = self.state['target'].float()
+
+        # Unpack (img, path)
         input = self.state['input']
         self.state['feature'] = input[0]   # [B, 3, H, W]
         self.state['out']     = input[1]   # list of path strings
-        self.state['input']   = input[2]   # [14, 300] word embeddings
 
     def on_end_batch(self, training, model, criterion, data_loader,
                      optimizer=None, display=True):
@@ -476,8 +475,8 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             self, training, model, criterion, data_loader, display)
 
         if not training:
-            # Accumulate sigmoid scores and raw {-1,0,1} targets
             probs = torch.sigmoid(self.state['output']).detach().cpu().numpy()
+            # Dùng target_gt (giữ -1) để compute_AUC_uncertain hoạt động đúng
             gt    = self.state['target_gt'].detach().cpu().numpy()
             self.state['_val_scores'].append(probs)
             self.state['_val_targets'].append(gt)
@@ -487,62 +486,59 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
         loss = self.state['meter_loss'].avg
 
         if training:
-            # Training: quick mAP from ap_meter (no extra pass needed)
             map_val = 100.0 * self.state['ap_meter'].value().mean()
             if display:
                 print(f'Epoch: [{self.state["epoch"]}]\t'
                       f'Loss {loss:.4f}\tmAP {map_val:.3f}')
             return map_val
 
-        # Validation: use evaluate.py for proper AUC + mAP metrics
+        # Validation
         val_scores  = self.state.get('_val_scores',  [])
         val_targets = self.state.get('_val_targets', [])
 
         if not val_scores:
-            print(f'Test:\tLoss {loss:.4f}  (no predictions collected)')
+            print(f'Val:\tLoss {loss:.4f}  (no predictions collected)')
             return 0.0
 
-        scores  = np.concatenate(val_scores,  axis=0)  # [N, 14]
-        targets = np.concatenate(val_targets, axis=0)  # [N, 14]
+        scores  = np.concatenate(val_scores,  axis=0)   # [N, 14]
+        targets = np.concatenate(val_targets, axis=0)   # [N, 14] — có thể có -1
 
-        mAP                   = compute_mAP(scores, targets)
-        mean_auc, per_class   = compute_mean_AUC(scores, targets)
-        unc_auc               = compute_AUC_uncertain(scores, targets)
+        mAP              = compute_mAP(scores, targets)
+        mean_auc, per_cls = compute_mean_AUC(scores, targets)
+        unc_auc          = compute_AUC_uncertain(scores, targets)
 
         results = {
             'map'          : round(mAP,      4) if not np.isnan(mAP)      else None,
             'mean_auc'     : round(mean_auc, 4) if not np.isnan(mean_auc) else None,
+            # unc_auc = nan là bình thường khi val set không có -1 (CheXpert official val)
             'unc_auc'      : round(unc_auc,  4) if not np.isnan(unc_auc)  else None,
-            'per_class_auc': per_class,
+            'per_class_auc': per_cls,
         }
 
         if display:
             print(f'\nVal:\tLoss {loss:.4f}')
             print_metrics(results)
 
-        # Return mean_auc as the scalar score for checkpoint selection.
-        # Falls back to mAP if AUC cannot be computed (e.g. all-zeros val set).
-        score = mean_auc if not np.isnan(mean_auc) else (mAP if not np.isnan(mAP) else 0.0)
+        # Dùng mAP làm primary score để chọn checkpoint (khớp proposal).
+        # Fallback mean_auc nếu mAP không tính được.
+        score = mAP if not np.isnan(mAP) else (mean_auc if not np.isnan(mean_auc) else 0.0)
         return float(score)
 
     def on_forward(self, training, model, criterion, data_loader,
                    optimizer=None, display=True):
         feature_var = self.state['feature'].float()
         target_var  = self.state['target'].float()
-        # word_vec detached: gradients flow through GCN weights, not embeddings
-        inp_var = self.state['input'].float().detach()
 
         if self.state['use_gpu']:
             feature_var = feature_var.cuda()
-            inp_var     = inp_var.cuda()
-            # target already moved to GPU in train()/validate()
 
-        self.state['output'] = model(feature_var, inp_var)  # logits [B, 14]
+        # inp là register_buffer trong model — tự .cuda() cùng model,
+        # không cần truyền qua đây nữa
+        self.state['output'] = model(feature_var)   # logits [B, 14]
         self.state['loss']   = criterion(self.state['output'], target_var)
 
         if training:
             optimizer.zero_grad()
             self.state['loss'].backward()
-            # Clip gradient: nếu norm > 10 thì scale xuống
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
