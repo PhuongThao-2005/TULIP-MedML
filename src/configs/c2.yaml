@@ -1,5 +1,5 @@
-# C1: ResNet-101 + GloVe + BCE  <- baseline
-name: C1_baseline
+# C2: Swin-T + GloVe + BCE  <- thay backbone
+name: C2_swin
 seed: 42
 
 data:
@@ -8,22 +8,22 @@ data:
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # giữ -1, engine tự remap cho BCE
-  img_size:  448
+  uncertain: keep
+  img_size:  224   # Swin-T pretrained trên 224, không phải 448
 
 model:
-  backbone:   resnet101
+  backbone:   swin_t   #  thay đổi duy nhất so với C1
   pretrained: true
   gcn_in:     300
   t:          0.4
 
 loss:
-  type:       bce
+  type: bce
 
 train:
   epochs:      40
   batch_size:  16
-  lr:          0.01
+  lr:          0.001   # Swin-T dùng lr nhỏ hơn ResNet - transformer nhạy hơn
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
@@ -31,5 +31,5 @@ train:
   workers:     4
 
 output:
-  save_dir: /kaggle/working/checkpoints/c1
-  log_dir:  /kaggle/working/logs/c1
+  save_dir: /kaggle/working/checkpoints/c2
+  log_dir:  /kaggle/working/logs/c2

@@ -1,24 +1,24 @@
-# C1: ResNet-101 + GloVe + BCE  <- baseline
-name: C1_baseline
+# C3: ResNet-101 + BiomedCLIP init + BCE  <- thay node init
+name: C3_biomedclip
 seed: 42
 
 data:
   root:      /kaggle/input/datasets/ashery/chexpert
   train_csv: /kaggle/working/TULIP-MedML/data/train_small.csv
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
-  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_biomedclip_vec.npy  # file khác
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # giữ -1, engine tự remap cho BCE
+  uncertain: keep
   img_size:  448
 
 model:
   backbone:   resnet101
   pretrained: true
-  gcn_in:     300
+  gcn_in:     512   # BiomedCLIP output 512 chiều, không phải 300
   t:          0.4
 
 loss:
-  type:       bce
+  type: bce
 
 train:
   epochs:      40
@@ -31,5 +31,5 @@ train:
   workers:     4
 
 output:
-  save_dir: /kaggle/working/checkpoints/c1
-  log_dir:  /kaggle/working/logs/c1
+  save_dir: /kaggle/working/checkpoints/c3
+  log_dir:  /kaggle/working/logs/c3

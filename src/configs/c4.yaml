@@ -1,5 +1,5 @@
-# C1: ResNet-101 + GloVe + BCE  <- baseline
-name: C1_baseline
+# C4: ResNet-101 + GloVe + UA-ASL  <- thay loss
+name: C4_uaasl
 seed: 42
 
 data:
@@ -8,7 +8,7 @@ data:
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # giữ -1, engine tự remap cho BCE
+  uncertain: keep   # UA-ASL nhận -1 trực tiếp, KHÔNG remap
   img_size:  448
 
 model:
@@ -18,7 +18,10 @@ model:
   t:          0.4
 
 loss:
-  type:       bce
+  type:       ua_asl   #  thay đổi duy nhất so với C1
+  gamma_pos:  0
+  gamma_neg:  4
+  lambda_unc: 0.5
 
 train:
   epochs:      40
@@ -31,5 +34,5 @@ train:
   workers:     4
 
 output:
-  save_dir: /kaggle/working/checkpoints/c1
-  log_dir:  /kaggle/working/logs/c1
+  save_dir: /kaggle/working/checkpoints/c4
+  log_dir:  /kaggle/working/logs/c4

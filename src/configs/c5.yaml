@@ -1,29 +1,32 @@
-# C1: ResNet-101 + GloVe + BCE  <- baseline
-name: C1_baseline
+# C5: Swin-T + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+name: C5_tulip_medml
 seed: 42
 
 data:
   root:      /kaggle/input/datasets/ashery/chexpert
   train_csv: /kaggle/working/TULIP-MedML/data/train_small.csv
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
-  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_biomedclip_vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # giữ -1, engine tự remap cho BCE
-  img_size:  448
+  uncertain: keep
+  img_size:  224
 
 model:
-  backbone:   resnet101
+  backbone:   swin_t
   pretrained: true
-  gcn_in:     300
+  gcn_in:     512
   t:          0.4
 
 loss:
-  type:       bce
+  type:       ua_asl
+  gamma_pos:  0
+  gamma_neg:  4
+  lambda_unc: 0.5
 
 train:
   epochs:      40
   batch_size:  16
-  lr:          0.01
+  lr:          0.001   # Swin-T lr nhỏ
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
@@ -31,5 +34,5 @@ train:
   workers:     4
 
 output:
-  save_dir: /kaggle/working/checkpoints/c1
-  log_dir:  /kaggle/working/logs/c1
+  save_dir: /kaggle/working/checkpoints/c5
+  log_dir:  /kaggle/working/logs/c5
