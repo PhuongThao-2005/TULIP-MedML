@@ -5,10 +5,6 @@ Chạy 1 lần để tạo:
   data/chexpert_adj.pkl              — co-occurrence adjacency matrix
 
 Cách chạy:
-  # Không có GloVe (dùng random để test nhanh):
-  python gen_chexpert_data.py --csv CheXpert-v1.0-small/train.csv
-
-  # Có GloVe 300d (kết quả tốt hơn):
   python gen_chexpert_data.py --csv CheXpert-v1.0-small/train.csv \
       --glove /path/to/glove.840B.300d.txt
 """
@@ -85,14 +81,10 @@ def build_word_vectors(glove_path=None, out_path='data/chexpert_glove_word2vec.n
 
 def build_adj_matrix(csv_path, out_path='data/chexpert_adj.pkl', uncertain='zeros'):
     """
-    Đọc train.csv, tính co-occurrence matrix:
-        A[i][j] = count(label_i=1 AND label_j=1)
-        nums[j]  = count(label_j=1)
+    Tính co-occurrence matrix nhanh bằng vectorization.
 
-    gen_A() trong util.py sẽ tính P(i|j) = A[i][j] / nums[j]
-    rồi threshold với t để tạo adjacency 0/1.
-
-    uncertain: 'zeros' (uncertain→0) | 'ones' (uncertain→1)
+    A[i][j] = số ảnh có label_i=1 và label_j=1
+    nums[j] = số ảnh có label_j=1
     """
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
 
@@ -102,6 +94,7 @@ def build_adj_matrix(csv_path, out_path='data/chexpert_adj.pkl', uncertain='zero
 
     # Xử lý NaN và uncertain (-1)
     label_df = label_df.fillna(0)
+
     if uncertain == 'ones':
         label_df = label_df.replace(-1, 1)
     else:  # 'zeros'
@@ -110,24 +103,24 @@ def build_adj_matrix(csv_path, out_path='data/chexpert_adj.pkl', uncertain='zero
     labels = label_df.values.astype(np.float32)   # (N, 14)
     N = len(labels)
 
-    # Tính co-occurrence counts
-    A    = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.float32)
-    nums = np.zeros(NUM_CLASSES, dtype=np.float32)
+    binary = (labels == 1).astype(np.float32)     # (N, 14)
 
-    for i in range(NUM_CLASSES):
-        nums[i] = np.sum(labels[:, i] == 1)
-        for j in range(NUM_CLASSES):
-            A[i][j] = np.sum((labels[:, i] == 1) & (labels[:, j] == 1))
+    A    = binary.T @ binary                      # (14, 14)
+    nums = binary.sum(axis=0)                     # (14,)
 
+    # ===== save =====
     result = {'adj': A, 'nums': nums}
     with open(out_path, 'wb') as f:
         pickle.dump(result, f)
 
-    print(f"\n✓ Adjacency matrix saved: {out_path}  shape={A.shape}")
+    # ===== log =====
+    print(f"\nAdjacency matrix saved: {out_path}  shape={A.shape}")
     print("  Class counts (positive labels):")
+
     for cls, n in zip(CHEXPERT_CLASSES, nums):
         pct = 100 * n / N
         print(f"    {cls:35s}: {int(n):6d} ({pct:.1f}%)")
+
     return result
 
 

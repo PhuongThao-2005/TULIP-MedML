@@ -52,6 +52,7 @@ class CheXpertDataset(Dataset):
         root: str,
         csv_file: str,
         inp_name: Optional[str] = None,
+        split='train',
         label_policy: str = 'zeros',
         uncertain: Optional[str] = None,
         transform=None,
@@ -79,7 +80,7 @@ class CheXpertDataset(Dataset):
             self.inp = torch.zeros((NUM_CLASSES, 300), dtype=torch.float32)
 
         if self.transform is None:
-            self.transform = get_transform(split='train')
+            self.transform = get_transform(split=split)
 
     def __len__(self):
         return len(self.df)
@@ -108,23 +109,28 @@ class CheXpertDataset(Dataset):
         return labels
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        path = row['Path']
+        # Find a valid image path
+        for _ in range(len(self.df)):
+            row = self.df.iloc[idx]
+            img_path = self._resolve_path(row['Path'])
 
-        img_path = self._resolve_path(path)
+            if img_path and os.path.exists(img_path):
+                break
 
-        if img_path is None or not os.path.exists(img_path):
-            # skip sample lỗi
-            return self.__getitem__((idx + 1) % len(self.df))
+            idx = (idx + 1) % len(self.df)
+        else:
+            raise RuntimeError(" No valid image found in the dataset")
 
+        # Load image
         img = Image.open(img_path).convert('RGB')
         img = self.transform(img)
 
+        # Load label
         label = torch.from_numpy(self._prepare_labels(row))
         if self.target_transform is not None:
             label = self.target_transform(label)
 
-        return (img, path, self.inp), label
+        return (img, img_path), label
 
     def label_stats(self):
         stats = {}
