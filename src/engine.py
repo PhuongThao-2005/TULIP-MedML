@@ -570,7 +570,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
 
         mAP, per_class_ap = compute_mAP(scores, targets)
         mean_auc, per_cls = compute_mean_AUC(scores, targets)
-        unc_auc          = compute_AUC_uncertain(scores, targets)
+        unc_auc, per_class_unc_auc = compute_AUC_uncertain(scores, targets)
 
         results = {
             'map'          : round(mAP,      4) if not np.isnan(mAP)      else None,
@@ -579,6 +579,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             'unc_auc'      : round(unc_auc,  4) if not np.isnan(unc_auc)  else None,
             'per_class_auc': per_cls,
             'per_class_ap' : per_class_ap,
+            'per_class_unc_auc': per_class_unc_auc,
         }
 
         if display:
