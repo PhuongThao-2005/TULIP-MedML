@@ -222,45 +222,30 @@ def evaluate(model, loader, device='cuda') -> dict:
 # ─────────────────────────────────────────────────────────
 # Print
 # ─────────────────────────────────────────────────────────
-def print_metrics(results: dict, show_unc: bool = False):
+def print_metrics(results: dict):
     """
     In bảng Class | AUC | AP per-class, rồi các dòng tổng.
-
-    show_unc: chỉ in unc_auc khi dùng UA-ASL (C4/C5).
-              Với BCE (C1/C2/C3) val set không có -1 → unc_auc luôn nan,
-              không cần in.
     """
     per_auc = results.get('per_class_auc', {})
     per_ap  = results.get('per_class_ap',  {})
-    per_unc = results.get('per_class_unc_auc', {}) if show_unc else {}
+    per_unc = results.get('per_class_unc_auc', {})
 
-    # Header
-    if show_unc:
-        print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8} {'Unc_AUC':>8}")
-        print('-' * 67)
-    else:
-        print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8}")
-        print('-' * 55)
+    print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8} {'Unc_AUC':>8}")
+    print('-' * 67)
 
     for cls in CHEXPERT_CLASSES:
         auc = per_auc.get(cls, float('nan'))
         ap  = per_ap.get(cls,  float('nan'))
-        unc = per_unc.get(cls, float('nan')) if show_unc else None
+        unc = per_unc.get(cls, float('nan'))
 
         auc_str = f'{auc:.4f}' if not np.isnan(auc) else 'nan'
         ap_str  = f'{ap:.4f}'  if not np.isnan(ap)  else 'nan'
-        unc_str = f'{unc:.4f}' if show_unc and not np.isnan(unc) else ('nan' if show_unc else '')
+        unc_str = f'{unc:.4f}' if not np.isnan(unc) else 'nan'
 
-        if show_unc:
-            print(f'{cls:35s} {ap_str:>8} {auc_str:>8} {unc_str:>8}')
-        else:
-            print(f'{cls:35s} {ap_str:>8} {auc_str:>8}')
+        print(f'{cls:35s} {ap_str:>8} {auc_str:>8} {unc_str:>8}')
 
     # Separator
-    if show_unc:
-        print('-' * 67)
-    else:
-        print('-' * 55)
+    print('-' * 67)
 
     mean_auc = results.get('mean_auc')
     map_val  = results.get('map')
@@ -268,10 +253,7 @@ def print_metrics(results: dict, show_unc: bool = False):
 
     mean_auc_str = 'nan' if mean_auc is None else f'{mean_auc:.4f}'
     map_str      = 'nan' if map_val  is None else f'{map_val:.4f}'
-    unc_str      = 'nan' if unc is None else f'{unc:.4f}' if show_unc else ''
+    unc_str      = 'nan' if unc is None else f'{unc:.4f}'
 
     # Mean line
-    if show_unc:
-        print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8} {unc_str:>8}")
-    else:
-        print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8}")
+    print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8} {unc_str:>8}")

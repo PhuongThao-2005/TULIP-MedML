@@ -184,7 +184,7 @@ def main():
 
     print('\n=== Validation (Uncertain split) ===')
     results_unc = evaluate(raw_model, val_unc_loader, device=device)
-    print_metrics(results_unc, show_unc=True)
+    print_metrics(results_unc)
 
 
 if __name__ == '__main__':

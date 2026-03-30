@@ -595,8 +595,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
 
         if display:
             print(f'\nVal:\tLoss {loss:.4f}')
-            loss_type = self.state.get('loss_type', 'bce')
-            print_metrics(results, show_unc=(loss_type == 'ua_asl'))
+            print_metrics(results)
 
         # Dùng mAP làm primary score để chọn checkpoint (khớp proposal).
         # Fallback mean_auc nếu mAP không tính được.
