@@ -15,6 +15,63 @@ import pickle
 import numpy as np
 import pandas as pd
 
+CHEXPERT_DESCRIPTIONS = {
+    'No Finding':
+        'chest X-ray with no significant cardiopulmonary abnormality detected',
+
+    'Enlarged Cardiomediastinum':
+        'widening of the mediastinum or enlarged cardiac silhouette '
+        'on frontal chest X-ray, may indicate vascular or lymph node pathology',
+
+    'Cardiomegaly':
+        'abnormal enlargement of the heart shadow on chest X-ray, '
+        'cardiothoracic ratio greater than 0.5, suggesting cardiac disease',
+
+    'Lung Opacity':
+        'increased density in the lung parenchyma on chest X-ray, '
+        'presenting as consolidation, ground-glass opacity, or airspace disease',
+
+    'Lung Lesion':
+        'focal abnormality in the lung including nodule, mass, or cavitary '
+        'lesion visible on chest X-ray, may represent neoplasm or infection',
+
+    'Edema':
+        'pulmonary edema with bilateral airspace opacities, perihilar haziness, '
+        'and vascular congestion on chest X-ray due to fluid in lung interstitium',
+
+    'Consolidation':
+        'homogeneous opacification of lung parenchyma replacing air with fluid '
+        'or tissue on chest X-ray, consistent with pneumonia or hemorrhage',
+
+    'Pneumonia':
+        'infectious or inflammatory consolidation of lung parenchyma on chest '
+        'X-ray, often presenting as lobar or segmental airspace opacity with fever',
+
+    'Atelectasis':
+        'partial or complete collapse of lung tissue on chest X-ray, '
+        'causing volume loss and increased density due to airway obstruction',
+
+    'Pneumothorax':
+        'presence of air in the pleural space on chest X-ray, '
+        'visible as pleural line with absence of lung markings beyond the margin',
+
+    'Pleural Effusion':
+        'abnormal accumulation of fluid in the pleural cavity on chest X-ray, '
+        'appearing as blunting of costophrenic angle or meniscus sign',
+
+    'Pleural Other':
+        'pleural abnormality other than effusion on chest X-ray, '
+        'including pleural thickening, calcification, or fibrothorax',
+
+    'Fracture':
+        'cortical disruption or break in bony structures visible on chest X-ray, '
+        'commonly involving ribs or clavicle due to trauma',
+
+    'Support Devices':
+        'medical support devices visible on chest X-ray including endotracheal '
+        'tube, central venous catheter, pacemaker lead, or nasogastric tube',
+}
+
 CHEXPERT_CLASSES = [
     'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly',
     'Lung Opacity', 'Lung Lesion', 'Edema', 'Consolidation',
