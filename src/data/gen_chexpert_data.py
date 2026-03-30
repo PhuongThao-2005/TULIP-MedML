@@ -14,6 +14,10 @@ import argparse
 import pickle
 import numpy as np
 import pandas as pd
+import torch
+
+from open_clip import create_model_from_pretrained, get_tokenizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 CHEXPERT_DESCRIPTIONS = {
     'No Finding':
@@ -131,6 +135,85 @@ def build_word_vectors(glove_path=None, out_path='data/chexpert_glove_word2vec.n
     print(f"\n✓ Word vectors saved: {out_path}  shape={vecs.shape}")
     return vecs
 
+def gen_biomedclip_embeddings(
+    save_path: str = 'data/chexpert_biomedclip_vec.npy',
+    device   : str = 'cpu',
+) -> np.ndarray:
+    """
+    Encode 14 mô tả bệnh lý bằng BioMedCLIP text encoder.
+    Output: [14, 512] float32, L2-normalized.
+    Freeze toàn bộ encoder — không train, chỉ extract features.
+    """
+
+    print("[BioMedCLIP] Loading model...")
+    model, _ = create_model_from_pretrained(
+        'hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224'
+    )
+    tokenizer = get_tokenizer(
+        'hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224'
+    )
+
+    # Freeze toàn bộ — chỉ dùng để extract, không train
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
+
+    model = model.to(device)
+
+    # ── Encode 14 descriptions ────────────────────────
+    texts  = [CHEXPERT_DESCRIPTIONS[c] for c in CHEXPERT_CLASSES]
+    tokens = tokenizer(texts, context_length=256)
+    tokens = tokens.to(device)
+
+    with torch.no_grad():
+        embeddings = model.encode_text(tokens)       # [14, 512]
+        embeddings = embeddings / embeddings.norm(   # L2 normalize
+            dim=-1, keepdim=True
+        )
+
+    Z = embeddings.cpu().numpy().astype(np.float32)
+    np.save(save_path, Z)
+
+    print(f"[BioMedCLIP] Saved {save_path}")
+    print(f"  shape : {Z.shape}")          # (14, 512)
+    print(f"  dtype : {Z.dtype}")          # float32
+    print(f"  norm  : {np.linalg.norm(Z, axis=1).mean():.4f}")  # ≈ 1.0
+
+    return Z
+
+
+def verify_embeddings(path: str = 'data/chexpert_biomedclip_vec.npy'):
+    """
+    Kiểm tra embeddings phân biệt được các nhãn không.
+    In cosine similarity matrix — cặp bệnh liên quan phải có sim cao.
+    """
+
+    Z   = np.load(path)                          # [14, 512]
+    sim = cosine_similarity(Z)                   # [14, 14]
+
+    print(f"\n[Verify] shape={Z.shape}, norm≈{np.linalg.norm(Z,axis=1).mean():.3f}")
+
+    sim_copy = sim.copy()
+    np.fill_diagonal(sim_copy, 0)
+    flat_idx = np.argsort(sim_copy.ravel())[::-1][:3]
+    rows, cols = np.unravel_index(flat_idx, sim_copy.shape)
+
+    print("\nTop 3 cặp similarity cao (bệnh liên quan):")
+    for r, c in zip(rows, cols):
+        print(f"  {CHEXPERT_CLASSES[r]:30s} ↔ "
+              f"{CHEXPERT_CLASSES[c]:30s}: {sim_copy[r,c]:.4f}")
+
+    # Top 3 cặp similarity thấp nhất
+    np.fill_diagonal(sim_copy, 1)
+    flat_idx2 = np.argsort(sim_copy.ravel())[:3]
+    rows2, cols2 = np.unravel_index(flat_idx2, sim_copy.shape)
+
+    print("\nTop 3 cặp similarity thấp (bệnh không liên quan):")
+    for r, c in zip(rows2, cols2):
+        print(f"  {CHEXPERT_CLASSES[r]:30s} ↔ "
+              f"{CHEXPERT_CLASSES[c]:30s}: {sim_copy[r,c]:.4f}")
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PART 2: Adjacency Matrix (Co-occurrence)
@@ -210,3 +293,10 @@ if __name__ == '__main__':
     print("\n✓ Done. Files created:")
     print(f"   {vec_path}")
     print(f"   {adj_path}")
+
+if __name__ == '__main__':
+    Z = gen_biomedclip_embeddings(
+        save_path='data/chexpert_biomedclip_word2vec.npy',
+        device='cuda' if torch.cuda.is_available() else 'cpu',
+    )
+    verify_embeddings('data/chexpert_biomedclip_word2vec.npy')
