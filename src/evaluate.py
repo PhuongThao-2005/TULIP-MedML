@@ -114,7 +114,7 @@ def compute_mean_AUC(
 def compute_AUC_uncertain(
     scores : np.ndarray,
     targets: np.ndarray,
-) -> float:
+) -> tuple[float, dict]:
     """
     Chỉ tính trên subset sample có ít nhất 1 nhãn = -1.
     Map uncertain (-1) → positive (1) khi evaluate.
@@ -129,14 +129,15 @@ def compute_AUC_uncertain(
     # Lấy subset có ít nhất 1 nhãn -1
     has_uncertain = (targets == -1).any(axis=1)
     if has_uncertain.sum() == 0:
-        return float('nan')
+        return float('nan'), {}
 
     s_unc = scores[has_uncertain]           # [M, 14]
     t_unc = targets[has_uncertain].copy()   # [M, 14]
     t_unc[t_unc == -1] = 1                  # uncertain → positive
 
     aucs = []
-    for i in range(len(CHEXPERT_CLASSES)):
+    per_class = {}
+    for i, cls in enumerate(CHEXPERT_CLASSES):
         t_c = t_unc[:, i]
         s_c = s_unc[:, i]
         if t_c.sum() == 0 or (1 - t_c).sum() == 0:
@@ -144,10 +145,12 @@ def compute_AUC_uncertain(
         try:
             auc = roc_auc_score(t_c, s_c)
             aucs.append(auc)
+            per_class[cls] = round(float(auc), 4)
         except ValueError:
             pass
 
-    return float(np.mean(aucs)) if aucs else float('nan')
+    mean_auc = float(np.mean(aucs)) if aucs else float('nan')
+    return mean_auc, per_class
 
 
 # ─────────────────────────────────────────────────────────
@@ -196,6 +199,7 @@ def evaluate(model, loader, device='cuda') -> dict:
             'unc_auc'      : None,
             'per_class_auc': {},
             'per_class_ap' : {},
+            'per_class_unc_auc': {},
         }
 
     scores  = np.concatenate(all_scores,  axis=0)  # [N, 14]
@@ -203,7 +207,7 @@ def evaluate(model, loader, device='cuda') -> dict:
 
     map_score,  per_class_ap  = compute_mAP(scores, targets)
     mean_auc,   per_class_auc = compute_mean_AUC(scores, targets)
-    unc_auc                   = compute_AUC_uncertain(scores, targets)
+    unc_auc,    per_class_unc = compute_AUC_uncertain(scores, targets)
 
     return {
         'map'          : round(map_score, 4) if not np.isnan(map_score) else None,
@@ -211,6 +215,7 @@ def evaluate(model, loader, device='cuda') -> dict:
         'unc_auc'      : round(unc_auc,   4) if not np.isnan(unc_auc)   else None,
         'per_class_auc': per_class_auc,
         'per_class_ap' : per_class_ap,
+        'per_class_unc_auc': per_class_unc,
     }
 
 
@@ -227,20 +232,35 @@ def print_metrics(results: dict, show_unc: bool = False):
     """
     per_auc = results.get('per_class_auc', {})
     per_ap  = results.get('per_class_ap',  {})
+    per_unc = results.get('per_class_unc_auc', {}) if show_unc else {}
 
-    print(f"\n{'Class':35s} {'AUC':>8} {'AP':>8}")
-    print('-' * 55)
+    # Header
+    if show_unc:
+        print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8} {'Unc_AUC':>8}")
+        print('-' * 67)
+    else:
+        print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8}")
+        print('-' * 55)
 
     for cls in CHEXPERT_CLASSES:
         auc = per_auc.get(cls, float('nan'))
         ap  = per_ap.get(cls,  float('nan'))
+        unc = per_unc.get(cls, float('nan')) if show_unc else None
 
         auc_str = f'{auc:.4f}' if not np.isnan(auc) else 'nan'
         ap_str  = f'{ap:.4f}'  if not np.isnan(ap)  else 'nan'
+        unc_str = f'{unc:.4f}' if show_unc and not np.isnan(unc) else ('nan' if show_unc else '')
 
-        print(f'{cls:35s} {auc_str:>8} {ap_str:>8}')
+        if show_unc:
+            print(f'{cls:35s} {ap_str:>8} {auc_str:>8} {unc_str:>8}')
+        else:
+            print(f'{cls:35s} {ap_str:>8} {auc_str:>8}')
 
-    print('-' * 55)
+    # Separator
+    if show_unc:
+        print('-' * 67)
+    else:
+        print('-' * 55)
 
     mean_auc = results.get('mean_auc')
     map_val  = results.get('map')
@@ -248,11 +268,10 @@ def print_metrics(results: dict, show_unc: bool = False):
 
     mean_auc_str = 'nan' if mean_auc is None else f'{mean_auc:.4f}'
     map_str      = 'nan' if map_val  is None else f'{map_val:.4f}'
+    unc_str      = 'nan' if unc is None else f'{unc:.4f}' if show_unc else ''
 
-    # Gộp thành 1 dòng "Mean" đúng cột
-    print(f"{'Mean':35s} {mean_auc_str:>8} {map_str:>8}")
-
-    # unc_auc (nếu có) → để riêng (vì không thuộc cột AP)
+    # Mean line
     if show_unc:
-        unc_str = 'nan' if unc is None else f'{unc:.4f}'
-        print(f"{'unc_auc':35s} {unc_str:>8}")
+        print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8} {unc_str:>8}")
+    else:
+        print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8}")

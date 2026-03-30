@@ -4,8 +4,9 @@ seed: 42
 
 data:
   root:      /kaggle/input/datasets/ashery/chexpert
-  train_csv: /kaggle/working/TULIP-MedML/data/train_small.csv
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small_v2.csv
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
   uncertain: keep   # UA-ASL nhận -1 trực tiếp, KHÔNG remap

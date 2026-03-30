@@ -179,7 +179,7 @@ class Engine:
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
-    def learning(self, model, criterion, train_dataset, val_dataset, optimizer=None):
+    def learning(self, model, criterion, train_dataset, val_dataset, val_uncertain_dataset=None, optimizer=None):
         self.init_learning(model, criterion)
 
         train_dataset.transform = self.state['train_transform']
@@ -201,6 +201,19 @@ class Engine:
             num_workers=self.state['workers'],
             pin_memory=self.state['use_gpu'],
         )
+        
+        val_unc_loader = None
+        if val_uncertain_dataset is not None:
+            val_uncertain_dataset.transform = self.state['val_transform']
+            val_uncertain_dataset.target_transform = self._state('val_target_transform')
+
+            val_unc_loader = torch.utils.data.DataLoader(
+                val_uncertain_dataset,
+                batch_size=self.state['batch_size'],
+                shuffle=False,
+                num_workers=self.state['workers'],
+                pin_memory=self.state['use_gpu'],
+            )
 
         # Resume từ checkpoint nếu có
         resume_path = self._state('resume')
@@ -245,7 +258,12 @@ class Engine:
             print('lr:', lr)
 
             self.train(train_loader, model, criterion, optimizer, epoch)
+            print("\n=== Val (Official) ===")
             score = self.validate(val_loader, model, criterion)
+
+            if val_unc_loader is not None:
+                print("\n=== Val (Uncertain) ===")
+                _ = self.validate(val_unc_loader, model, criterion)
 
             # Lưu checkpoint mỗi epoch, đánh dấu is_best nếu score tốt nhất
             is_best = score > self.state['best_score']

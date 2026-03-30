@@ -75,6 +75,13 @@ def main():
         inp_name=cfg['data']['word_vec'],
         uncertain=uncertain_policy,
     )
+    
+    val_uncertain_ds = CheXpert(
+        root=root,
+        csv_file=cfg['data']['val_uncertain_csv'],  # thêm trong config
+        inp_name=cfg['data']['word_vec'],
+        uncertain='keep',  # giữ -1 để compute unc_auc
+    )
 
     if args.subset:
         n_val = max(50, args.subset // 9)
@@ -116,12 +123,12 @@ def main():
         'use_pb'            : True,
         'difficult_examples': False,
         'resume'            : resume_path,
-        'loss_type'        : cfg['train']['type'],
+        'loss_type'        : cfg['loss']['type'],
     }
 
     # ── Training ──────────────────────────────────────────────────────────────
     engine     = GCNMultiLabelMAPEngine(state)
-    best_score = engine.learning(model, criterion, train_ds, val_ds, optimizer)
+    best_score = engine.learning(model, criterion, train_ds, val_ds, val_uncertain_dataset=val_uncertain_ds, optimizer = optimizer)
     print(f'\n[{cfg["name"]}] Training complete.  Best val score = {best_score:.4f}')
 
     # ── Final evaluation on validation set ───────────────────────────────────
@@ -131,6 +138,12 @@ def main():
 
     # Unwrap DataParallel if needed for evaluate()
     raw_model = model.module if hasattr(model, 'module') else model
+
+    best_path = os.path.join(cfg['output']['save_dir'], 'model_best.pth.tar')
+    print(f'Loading best model from: {best_path}')
+
+    checkpoint = torch.load(best_path, map_location=device)
+    raw_model.load_state_dict(checkpoint['state_dict'])
 
     # Build a fresh val loader with the val transform the engine set
     val_loader = torch.utils.data.DataLoader(
@@ -144,6 +157,19 @@ def main():
     print('\n=== Final validation metrics ===')
     results = evaluate(raw_model, val_loader, device=device)
     print_metrics(results)
+    
+    # --- Val uncertain ---
+    val_unc_loader = torch.utils.data.DataLoader(
+        val_uncertain_ds,
+        batch_size=state['batch_size'],
+        shuffle=False,
+        num_workers=state['workers'],
+        pin_memory=(device == 'cuda'),
+    )
+
+    print('\n=== Validation (Uncertain split) ===')
+    results_unc = evaluate(raw_model, val_unc_loader, device=device)
+    print_metrics(results_unc, show_unc=True)
 
 
 if __name__ == '__main__':
