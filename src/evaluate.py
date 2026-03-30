@@ -18,12 +18,7 @@ def _unpack_batch(batch):
     elif isinstance(inputs, (tuple, list)):
         if len(inputs) == 0:
             raise ValueError('Input tuple is empty.')
-
         imgs = inputs[0]
-
-        # Support both:
-        #   (img, word_vec)
-        #   (img, path, word_vec)
         if len(inputs) >= 3 and torch.is_tensor(inputs[2]):
             word_vecs = inputs[2]
         elif len(inputs) >= 2 and torch.is_tensor(inputs[1]):
@@ -40,14 +35,22 @@ def _unpack_batch(batch):
 # ─────────────────────────────────────────────────────────
 # 1. mAP — exclude nhãn -1
 # ─────────────────────────────────────────────────────────
-def compute_mAP(scores: np.ndarray, targets: np.ndarray) -> float:
+def compute_mAP(
+    scores : np.ndarray,
+    targets: np.ndarray,
+) -> tuple[float, dict]:
     """
     scores:  [N, 14] sigmoid output
     targets: [N, 14] {-1, 0, 1}
     Bỏ sample có nhãn -1, chỉ tính trên {0, 1}.
+
+    Trả về (mean_ap, per_class_dict) — khớp với compute_mean_AUC.
+    per_class_dict: {label_name: ap} để in bảng.
     """
-    aps = []
-    for i in range(len(CHEXPERT_CLASSES)):
+    per_class = {}
+    aps       = []
+
+    for i, cls in enumerate(CHEXPERT_CLASSES):
         t = targets[:, i]
         s = scores[:, i]
 
@@ -60,11 +63,13 @@ def compute_mAP(scores: np.ndarray, targets: np.ndarray) -> float:
 
         try:
             ap = average_precision_score(t_bin, s[mask])
+            per_class[cls] = round(float(ap), 4)
             aps.append(ap)
         except ValueError:
             pass
 
-    return float(np.mean(aps)) if aps else float('nan')
+    mean_ap = float(np.mean(aps)) if aps else float('nan')
+    return mean_ap, per_class
 
 
 # ─────────────────────────────────────────────────────────
@@ -117,6 +122,9 @@ def compute_AUC_uncertain(
     Lý do: ảnh uncertain thường có dấu hiệu bệnh mờ nhạt
     → model tốt phải cho score cao hơn ảnh âm tính rõ ràng
     → nếu UA-ASL hoạt động đúng, unc_auc sẽ cao hơn BCE.
+
+    Lưu ý: CheXpert official val set chỉ có {0, 1} → luôn trả nan.
+    Metric này chỉ có ý nghĩa khi eval trên train subset hoặc uncertain split.
     """
     # Lấy subset có ít nhất 1 nhãn -1
     has_uncertain = (targets == -1).any(axis=1)
@@ -125,18 +133,14 @@ def compute_AUC_uncertain(
 
     s_unc = scores[has_uncertain]           # [M, 14]
     t_unc = targets[has_uncertain].copy()   # [M, 14]
-
-    # Map -1 → 1 (uncertain = positive khi evaluate)
-    t_unc[t_unc == -1] = 1
+    t_unc[t_unc == -1] = 1                  # uncertain → positive
 
     aucs = []
     for i in range(len(CHEXPERT_CLASSES)):
         t_c = t_unc[:, i]
         s_c = s_unc[:, i]
-
         if t_c.sum() == 0 or (1 - t_c).sum() == 0:
             continue
-
         try:
             auc = roc_auc_score(t_c, s_c)
             aucs.append(auc)
@@ -153,18 +157,13 @@ def evaluate(model, loader, device='cuda') -> dict:
     """
     Chạy inference toàn bộ loader, tính 3 metrics.
 
-    Args:
-        model  : PyTorch model, output [B, 14] logits
-        loader : DataLoader trả về (img, word_vec), labels
-                 labels: [B, 14] tensor {-1, 0, 1}
-        device : 'cuda' hoặc 'cpu'
-
     Returns:
         {
             "map"          : float,
             "mean_auc"     : float,
             "unc_auc"      : float,
-            "per_class_auc": dict   # {label: auc} để in bảng
+            "per_class_auc": dict,   # {label: auc}
+            "per_class_ap" : dict,   # {label: ap}
         }
     """
     model.eval()
@@ -192,42 +191,68 @@ def evaluate(model, loader, device='cuda') -> dict:
 
     if not all_scores:
         return {
-            'map': None,
-            'mean_auc': None,
-            'unc_auc': None,
+            'map'          : None,
+            'mean_auc'     : None,
+            'unc_auc'      : None,
             'per_class_auc': {},
+            'per_class_ap' : {},
         }
 
     scores  = np.concatenate(all_scores,  axis=0)  # [N, 14]
     targets = np.concatenate(all_targets, axis=0)  # [N, 14]
 
-    map_score          = compute_mAP(scores, targets)
-    mean_auc, per_class = compute_mean_AUC(scores, targets)
-    unc_auc            = compute_AUC_uncertain(scores, targets)
+    map_score,  per_class_ap  = compute_mAP(scores, targets)
+    mean_auc,   per_class_auc = compute_mean_AUC(scores, targets)
+    unc_auc                   = compute_AUC_uncertain(scores, targets)
 
     return {
         'map'          : round(map_score, 4) if not np.isnan(map_score) else None,
-        'mean_auc'     : round(mean_auc,  4) if not np.isnan(mean_auc) else None,
-        'unc_auc'      : round(unc_auc,   4) if not np.isnan(unc_auc) else None,
-        'per_class_auc': per_class,
+        'mean_auc'     : round(mean_auc,  4) if not np.isnan(mean_auc)  else None,
+        'unc_auc'      : round(unc_auc,   4) if not np.isnan(unc_auc)   else None,
+        'per_class_auc': per_class_auc,
+        'per_class_ap' : per_class_ap,
     }
 
 
 # ─────────────────────────────────────────────────────────
-# Giữ lại hàm print từ code gốc — dùng sau evaluate()
+# Print
 # ─────────────────────────────────────────────────────────
-def print_metrics(results: dict):
-    per = results.get('per_class_auc', {})
-    print(f"\n{'Class':35s} {'AUC':>8}")
-    print('-' * 45)
+def print_metrics(results: dict, show_unc: bool = False):
+    """
+    In bảng Class | AUC | AP per-class, rồi các dòng tổng.
+
+    show_unc: chỉ in unc_auc khi dùng UA-ASL (C4/C5).
+              Với BCE (C1/C2/C3) val set không có -1 → unc_auc luôn nan,
+              không cần in.
+    """
+    per_auc = results.get('per_class_auc', {})
+    per_ap  = results.get('per_class_ap',  {})
+
+    print(f"\n{'Class':35s} {'AUC':>8} {'AP':>8}")
+    print('-' * 55)
+
     for cls in CHEXPERT_CLASSES:
-        auc = per.get(cls, float('nan'))
-        val = f'{auc:.4f}' if not np.isnan(auc) else '   nan'
-        print(f'{cls:35s} {val:>8}')
-    print('-' * 45)
+        auc = per_auc.get(cls, float('nan'))
+        ap  = per_ap.get(cls,  float('nan'))
+
+        auc_str = f'{auc:.4f}' if not np.isnan(auc) else 'nan'
+        ap_str  = f'{ap:.4f}'  if not np.isnan(ap)  else 'nan'
+
+        print(f'{cls:35s} {auc_str:>8} {ap_str:>8}')
+
+    print('-' * 55)
+
     mean_auc = results.get('mean_auc')
-    map_val = results.get('map')
-    print(f"{'mean_auc':35s} {'N/A' if mean_auc is None else f'{mean_auc:.4f}':>8}")
-    print(f"{'map':35s} {'N/A' if map_val is None else f'{map_val:.4f}':>8}")
-    unc = results['unc_auc']
-    print(f"{'unc_auc':35s} {'N/A' if unc is None else f'{unc:.4f}':>8}")
+    map_val  = results.get('map')
+    unc      = results.get('unc_auc')
+
+    mean_auc_str = 'nan' if mean_auc is None else f'{mean_auc:.4f}'
+    map_str      = 'nan' if map_val  is None else f'{map_val:.4f}'
+
+    # Gộp thành 1 dòng "Mean" đúng cột
+    print(f"{'Mean':35s} {mean_auc_str:>8} {map_str:>8}")
+
+    # unc_auc (nếu có) → để riêng (vì không thuộc cột AP)
+    if show_unc:
+        unc_str = 'nan' if unc is None else f'{unc:.4f}'
+        print(f"{'unc_auc':35s} {unc_str:>8}")

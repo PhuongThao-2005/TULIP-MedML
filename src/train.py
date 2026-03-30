@@ -27,6 +27,16 @@ def build_optimizer(model, cfg: dict) -> torch.optim.Optimizer:
         weight_decay=cfg['train']['weight_decay'],
     )
 
+def find_latest_checkpoint(save_dir):
+    if not os.path.exists(save_dir):
+        return None
+
+    files = [f for f in os.listdir(save_dir) if f.startswith("checkpoint_epoch")]
+    if not files:
+        return None
+
+    files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
+    return os.path.join(save_dir, files[-1])
 
 def main():
     parser = argparse.ArgumentParser(description='Train GCN on CheXpert')
@@ -90,6 +100,11 @@ def main():
 
     # ── Engine state ──────────────────────────────────────────────────────────
     os.makedirs(cfg['output']['save_dir'], exist_ok=True)
+    resume_path = find_latest_checkpoint(cfg['output']['save_dir'])
+    if resume_path:
+        print(f"Auto-resume from: {resume_path}")
+    else:
+        print("Train from scratch")
     state = {
         'batch_size'        : cfg['train']['batch_size'],
         'image_size'        : cfg['data']['img_size'],
@@ -100,6 +115,8 @@ def main():
         'print_freq'        : 100,
         'use_pb'            : True,
         'difficult_examples': False,
+        'resume'            : resume_path,
+        'loss_type'        : cfg['train']['type'],
     }
 
     # ── Training ──────────────────────────────────────────────────────────────

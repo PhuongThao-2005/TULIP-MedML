@@ -202,24 +202,39 @@ class Engine:
             pin_memory=self.state['use_gpu'],
         )
 
+        # Resume từ checkpoint nếu có
+        resume_path = self._state('resume')
+
+        #  AUTO RESUME nếu không có resume
+        if resume_path is None:
+            resume_path = self.find_latest_checkpoint()
+
+        if resume_path is not None and os.path.isfile(resume_path):
+            print(f"=> loading checkpoint '{resume_path}'")
+            checkpoint = torch.load(resume_path, map_location='cpu')
+
+            self.state['start_epoch'] = checkpoint['epoch'] + 1
+            self.state['best_score']  = checkpoint['best_score']
+
+            model.load_state_dict(checkpoint['state_dict'])
+
+            if optimizer is not None and 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                
+                if self.state['use_gpu']:
+                    for state in optimizer.state.values():
+                        for k, v in state.items():
+                            if isinstance(v, torch.Tensor):
+                                state[k] = v.cuda()
+
+            print(f"=> resumed from epoch {checkpoint['epoch']}")
+        else:
+            print("=> no checkpoint found, train from scratch")
+
         if self.state['use_gpu']:
             model = torch.nn.DataParallel(
                 model, device_ids=self.state['device_ids']).cuda()
-
-        # Resume từ checkpoint nếu có
-        if self._state('resume') is not None:
-            if os.path.isfile(self.state['resume']):
-                print("=> loading checkpoint '{}'".format(self.state['resume']))
-                checkpoint = torch.load(self.state['resume'], map_location='cpu')
-                self.state['start_epoch'] = checkpoint['epoch'] + 1
-                self.state['best_score']  = checkpoint['best_score']
-                model.load_state_dict(checkpoint['state_dict'])
-                if optimizer is not None and 'optimizer' in checkpoint:
-                    optimizer.load_state_dict(checkpoint['optimizer'])
-                print("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
-            else:
-                print("=> no checkpoint found at '{}'".format(self.state['resume']))
-
+            
         if self.state['evaluate']:
             self.validate(val_loader, model, criterion)
             return
@@ -340,6 +355,23 @@ class Engine:
                 shutil.copyfile(filename, filename_best)
                 self.state['filename_previous_best'] = filename_best
 
+        # giữ tối đa N checkpoint
+        max_keep = self.state.get('max_keep_ckpt', 5)
+
+        import glob
+        files = glob.glob(os.path.join(self.state['save_model_path'], 'checkpoint_epoch_*.pth.tar'))
+
+        if len(files) > max_keep:
+            files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+            to_delete = files[:-max_keep]
+
+            for f in to_delete:
+                try:
+                    os.remove(f)
+                    print(f"Removed old checkpoint: {f}")
+                except:
+                    pass
+
     def adjust_learning_rate(self, optimizer):
         """
         Decay lr × 0.1 tại mỗi epoch trong epoch_step.
@@ -360,6 +392,21 @@ class Engine:
             pg['lr'] = base_lr * factor
             lr_list.append(pg['lr'])
         return np.unique(lr_list)
+    
+    def find_latest_checkpoint(self):
+        import glob
+
+        if self._state('save_model_path') is None:
+            return None
+
+        pattern = os.path.join(self.state['save_model_path'], 'checkpoint_epoch_*.pth.tar')
+        files = glob.glob(pattern)
+
+        if not files:
+            return None
+
+        files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+        return files[-1]
 
 
 # ─── Multi-label mAP Engine ──────────────────────────────────────────────────
@@ -503,7 +550,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
         scores  = np.concatenate(val_scores,  axis=0)   # [N, 14]
         targets = np.concatenate(val_targets, axis=0)   # [N, 14] — có thể có -1
 
-        mAP              = compute_mAP(scores, targets)
+        mAP, per_class_ap = compute_mAP(scores, targets)
         mean_auc, per_cls = compute_mean_AUC(scores, targets)
         unc_auc          = compute_AUC_uncertain(scores, targets)
 
@@ -513,11 +560,13 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             # unc_auc = nan là bình thường khi val set không có -1 (CheXpert official val)
             'unc_auc'      : round(unc_auc,  4) if not np.isnan(unc_auc)  else None,
             'per_class_auc': per_cls,
+            'per_class_ap' : per_class_ap,
         }
 
         if display:
             print(f'\nVal:\tLoss {loss:.4f}')
-            print_metrics(results)
+            loss_type = self.state.get('loss_type', 'bce')
+            print_metrics(results, show_unc=(loss_type == 'ua_asl'))
 
         # Dùng mAP làm primary score để chọn checkpoint (khớp proposal).
         # Fallback mean_auc nếu mAP không tính được.
