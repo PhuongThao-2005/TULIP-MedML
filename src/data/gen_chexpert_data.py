@@ -202,10 +202,6 @@ def verify_embeddings(path: str = 'data/chexpert_biomedclip_vec.npy'):
     for r, c in zip(rows, cols):
         print(f"  {CHEXPERT_CLASSES[r]:30s} ↔ "
               f"{CHEXPERT_CLASSES[c]:30s}: {sim_copy[r,c]:.4f}")
-    # Kỳ vọng:
-    # Consolidation ↔ Pneumonia     : cao (cùng airspace disease)
-    # Edema ↔ Pleural Effusion      : cao (cùng fluid-related)
-    # Lung Opacity ↔ Consolidation  : cao (cùng density increase)
 
     # Top 3 cặp similarity thấp nhất
     np.fill_diagonal(sim_copy, 1)
@@ -216,9 +212,6 @@ def verify_embeddings(path: str = 'data/chexpert_biomedclip_vec.npy'):
     for r, c in zip(rows2, cols2):
         print(f"  {CHEXPERT_CLASSES[r]:30s} ↔ "
               f"{CHEXPERT_CLASSES[c]:30s}: {sim_copy[r,c]:.4f}")
-    # Kỳ vọng:
-    # No Finding ↔ Fracture         : thấp
-    # Support Devices ↔ Pneumothorax: thấp
 
 
 
