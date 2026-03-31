@@ -122,6 +122,7 @@ def main():
 
     # ── Engine state ──────────────────────────────────────────────────────────
     os.makedirs(cfg['output']['save_dir'], exist_ok=True)
+    os.makedirs(cfg['output']['log_dir'], exist_ok=True)
     resume_path = find_latest_checkpoint(cfg['output']['save_dir'])
     if resume_path:
         print(f"Auto-resume from: {resume_path}")
@@ -134,6 +135,7 @@ def main():
         'workers'           : cfg['train']['workers'],
         'epoch_step'        : cfg['train']['epoch_step'],
         'save_model_path'   : cfg['output']['save_dir'],
+        'log_dir'           : cfg['output']['log_dir'],
         'print_freq'        : 100,
         'use_pb'            : True,
         'difficult_examples': False,
