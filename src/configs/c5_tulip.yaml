@@ -1,0 +1,45 @@
+# C5: Swin-T + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+name: C5_tulip_medml
+seed: 42
+
+data:
+  root:      /kaggle/input/datasets/ashery/chexpert
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small_v2.csv
+  val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_biomedclip_vec.npy
+  adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
+  uncertain: keep
+  img_size:  224
+
+model:
+  backbone:   swin_t
+  pretrained: true
+  gcn_in:     512
+  t:          0.4
+
+loss:
+  type:       ua_asl
+  gamma_pos:  0
+  gamma_neg:  4
+  lambda_unc: 0.5
+
+train:
+  epochs:      20
+  batch_size:  16
+  lr:          0.001   # Swin-T lr nhỏ
+  lrp:         0.1
+  momentum:    0.9
+  weight_decay: 0.0001
+  epoch_step:  [30]
+  workers:     4
+
+grid_search:
+  epochs_per_run: 5          
+  n_subset_pct:   0.10       # 10% stratified của train_small_v2
+  gamma_pos:      [0, 1, 2]
+  gamma_neg:      [2, 3, 4]
+  lambda_unc:     [0.3, 0.5, 0.7]
+output:
+  save_dir: /kaggle/working/checkpoints/c5
+  log_dir:  /kaggle/working/logs/c5
