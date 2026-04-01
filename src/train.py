@@ -63,6 +63,24 @@ def find_latest_checkpoint(save_dir):
     files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
     return files[-1]
 
+def build_model(cfg: dict):
+    backbone = cfg['model'].get('backbone', 'resnet101').lower()
+    common_kwargs = {
+        'num_classes': NUM_CLASSES,
+        't': cfg['model']['t'],
+        'pretrained': cfg['model']['pretrained'],
+        'adj_file': cfg['data']['adj'],
+        'in_channel': cfg['model']['gcn_in'],
+        'inp_file': cfg['data']['word_vec'],
+    }
+
+    if backbone == 'resnet101':
+        return gcn_resnet101(**common_kwargs)
+    if backbone == 'swin_t':
+        return gcn_swin_t(**common_kwargs)
+
+    raise ValueError(f"Unsupported backbone: {backbone}")
+
 def main():
     parser = argparse.ArgumentParser(description='Train GCN on CheXpert')
     parser.add_argument('--config',    required=True,
@@ -115,28 +133,7 @@ def main():
         print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    backbone_name = cfg['model'].get('backbone', 'resnet101').lower()
-
-    if backbone_name == 'resnet101':
-        model = gcn_resnet101(
-            num_classes=NUM_CLASSES,
-            t=cfg['model']['t'],
-            pretrained=cfg['model']['pretrained'],
-            adj_file=cfg['data']['adj'],
-            in_channel=cfg['model']['gcn_in'],
-            inp_file=cfg['data']['word_vec'],
-        )
-    elif backbone_name == 'swin_t':
-        model = gcn_swin_t(
-            num_classes=NUM_CLASSES,
-            t=cfg['model']['t'],
-            pretrained=cfg['model']['pretrained'],
-            adj_file=cfg['data']['adj'],
-            in_channel=cfg['model']['gcn_in'],   # 300 (word vec dim, không phải image dim)
-            inp_file=cfg['data']['word_vec'],
-        )
-    else:
-        raise ValueError(f"Unknown backbone: {backbone_name}")
+    model = build_model(cfg)
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────
     criterion = build_criterion(cfg)
