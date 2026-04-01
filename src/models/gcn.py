@@ -3,7 +3,7 @@ from torch.nn import Parameter
 from src.util import *
 import torch
 import torch.nn as nn
-
+from src.models.backbone import SwinBackbone, get_swin_backbone
 
 class GraphConvolution(nn.Module):
     """
@@ -68,16 +68,8 @@ class GCNResnet(nn.Module):
         self.image_normalization_std = [0.229, 0.224, 0.225]
 
         if inp_file:
-            inp_np = np.load(inp_file).astype(np.float32)
-            if inp_np.ndim != 2 or inp_np.shape[0] != num_classes:
-                raise ValueError(
-                    f'Expected embedding shape ({num_classes}, D), got {inp_np.shape}'
-                )
-            if inp_np.shape[1] != in_channel:
-                raise ValueError(
-                    f'Embedding dim mismatch: file has {inp_np.shape[1]} but in_channel={in_channel}'
-                )
-            inp = torch.from_numpy(inp_np)
+            inp = torch.from_numpy(
+                np.load(inp_file).astype(np.float32))  # (14, 300)
         else:
             inp = torch.zeros(num_classes, in_channel)
         self.register_buffer('inp', inp)
@@ -108,3 +100,47 @@ class GCNResnet(nn.Module):
 def gcn_resnet101(num_classes, t, pretrained=False, adj_file=None, in_channel=300, inp_file=None):
     model = models.resnet101(pretrained=pretrained)
     return GCNResnet(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
+
+class GCNSwin(nn.Module):
+    def __init__(self, backbone, num_classes, in_channel=768, t=0,
+                 adj_file=None, inp_file=None):
+        super().__init__()
+        self.features = backbone          # SwinBackbone → (B, 2048)
+        self.num_classes = num_classes
+
+        # GCN branch: word-vec → class embeddings
+        self.gc1 = GraphConvolution(in_channel, 1024)
+        self.gc2 = GraphConvolution(1024, 2048)
+        self.relu = nn.LeakyReLU(0.2)
+
+        _adj = gen_A(num_classes, t, adj_file)
+        self.A = Parameter(torch.from_numpy(_adj).float())
+
+        inp = (torch.from_numpy(np.load(inp_file).astype(np.float32))
+               if inp_file else torch.zeros(num_classes, in_channel))
+        self.register_buffer('inp', inp)
+
+    def forward(self, x):
+        feature = self.features(x)           # (B, 2048)  ← backbone đã pool+project
+
+        adj = gen_adj(self.A).detach()
+        z = self.relu(self.gc1(self.inp, adj))   # (C, 1024)
+        z = self.relu(self.gc2(z, adj))          # (C, 2048)
+
+        z = z.transpose(0, 1)                    # (2048, C)
+        return torch.matmul(feature, z)          # (B, C)
+
+    def get_config_optim(self, lr, lrp):
+        return [
+            {'params': self.features.parameters(), 'lr': lr * lrp},
+            {'params': self.gc1.parameters(), 'lr': lr},
+            {'params': self.gc2.parameters(), 'lr': lr},
+        ]
+        
+def gcn_swin_t(num_classes, t, pretrained=True, adj_file=None, in_channel=768, inp_file=None):
+    backbone = get_swin_backbone(
+        "swin_tiny_patch4_window7_224",
+        pretrained=pretrained,
+        out_dim=2048,         # projection head align với GCN
+    )
+    return GCNSwin(backbone, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)

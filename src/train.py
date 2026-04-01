@@ -12,10 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
-from src.models.gcn import gcn_resnet101
+from src.models.gcn import gcn_resnet101, gcn_swin_t
 from src.evaluate import evaluate, print_metrics
 from src.loss.ua_asl import UncertaintyAwareASL
-
 
 def load_cfg(path: str) -> dict:
     with open(path, encoding='utf-8') as f:
@@ -126,14 +125,28 @@ def main():
         print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model = gcn_resnet101(
-        num_classes=NUM_CLASSES,
-        t=cfg['model']['t'],
-        pretrained=cfg['model']['pretrained'],
-        adj_file=cfg['data']['adj'],
-        in_channel=cfg['model']['gcn_in'],
-        inp_file=cfg['data']['word_vec'],
-    )
+    backbone_name = cfg['model'].get('backbone', 'resnet101').lower()
+
+    if backbone_name == 'resnet101':
+        model = gcn_resnet101(
+            num_classes=NUM_CLASSES,
+            t=cfg['model']['t'],
+            pretrained=cfg['model']['pretrained'],
+            adj_file=cfg['data']['adj'],
+            in_channel=cfg['model']['gcn_in'],
+            inp_file=cfg['data']['word_vec'],
+        )
+    elif backbone_name == 'swin_t':
+        model = gcn_swin_t(
+            num_classes=NUM_CLASSES,
+            t=cfg['model']['t'],
+            pretrained=cfg['model']['pretrained'],
+            adj_file=cfg['data']['adj'],
+            in_channel=cfg['model']['gcn_in'],   # 300 (word vec dim, không phải image dim)
+            inp_file=cfg['data']['word_vec'],
+        )
+    else:
+        raise ValueError(f"Unknown backbone: {backbone_name}")
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────
     criterion = build_criterion(cfg)
