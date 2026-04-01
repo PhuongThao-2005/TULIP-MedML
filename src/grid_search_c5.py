@@ -519,19 +519,22 @@ def run_grid_search(
     print(f"Val uncertain : {len(val_ds):,} samples\n")
 
     # ── Run grid ──────────────────────────────────────────────────────────────
-    results: list[dict] = []
+    log_dir = cfg["output"]["log_dir"]
+    os.makedirs(log_dir, exist_ok=True)
+    results_path = os.path.join(log_dir, "grid_results.json")
+    
+    completed_ids = set()
+    if os.path.isfile(results_path):
+        with open(results_path) as f:
+            results = json.load(f)
+        completed_ids = {r["run_id"] for r in results}
+        print(f"Resuming — {len(completed_ids)} runs already done: {sorted(completed_ids)}")
+    else:
+        results: list[dict] = []
 
     for run_id, (gp, gn, lu) in enumerate(grid, start=1):
-        if dry_run:
-            print(f"[{run_id:02d}/{len(grid)}] DRY RUN  γ+={gp} γ-={gn} λu={lu}")
-            results.append({
-                "run_id": run_id, "gamma_pos": gp, "gamma_neg": gn,
-                "lambda_unc": lu,
-                "mAP": round(np.random.uniform(0.2, 0.5), 4),
-                "mean_auc": round(np.random.uniform(0.5, 0.8), 4),
-                "unc_auc": round(np.random.uniform(0.4, 0.75), 4),
-                "elapsed_min": 0.0,
-            })
+        if run_id in completed_ids:
+            print(f"[{run_id:02d}/{len(grid)}] SKIP (already done)")
             continue
 
         res = _run_one(
@@ -541,14 +544,11 @@ def run_grid_search(
             run_id=run_id, total_runs=len(grid),
         )
         results.append(res)
+        
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"  [checkpoint] saved {len(results)} runs → {results_path}")
 
-    # ── Save JSON ──────────────────────────────────────────────────────────────
-    log_dir = cfg["output"]["log_dir"]
-    os.makedirs(log_dir, exist_ok=True)
-
-    results_path = os.path.join(log_dir, "grid_results.json")
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2)
     print(f"\nResults saved → {results_path}")
 
     best = max(results, key=lambda r: r["unc_auc"])
