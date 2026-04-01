@@ -219,7 +219,7 @@ def _run_one(
         for batch in train_loader:
             # CheXpert returns (img, path), label is separate
             # Engine convention: state['input'] = (img_tensor, path_list)
-            imgs, targets = batch[0], batch[1]
+            (imgs, _paths), targets = batch[0], batch[1]
             imgs    = imgs.to(device)
             targets = targets.float().to(device)
 
@@ -242,7 +242,7 @@ def _run_one(
 
     with torch.no_grad():
         for batch in val_loader:
-            imgs, targets = batch[0], batch[1]
+            (imgs, _paths), targets = batch[0], batch[1]
             imgs = imgs.to(device)
             logits = model(imgs)
             probs  = torch.sigmoid(logits).cpu().numpy()
