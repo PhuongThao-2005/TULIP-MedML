@@ -12,10 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
-from src.models.gcn import gcn_resnet101
+from src.models.gcn import gcn_resnet101, gcn_swin_t
 from src.evaluate import evaluate, print_metrics
 from src.loss.ua_asl import UncertaintyAwareASL
-
 
 def load_cfg(path: str) -> dict:
     with open(path, encoding='utf-8') as f:
@@ -54,25 +53,33 @@ def find_latest_checkpoint(save_dir):
     if not os.path.exists(save_dir):
         return None
 
-    # Also search in parent directory and subfolders c1, c2, c3, c4, c5, test
-    parent_dir = os.path.dirname(save_dir)
-    search_dirs = [save_dir, parent_dir]
-    for sub in ['c1', 'c2', 'c3', 'c4', 'c5', 'test']:
-        sub_dir = os.path.join(parent_dir, sub)
-        if os.path.exists(sub_dir):
-            search_dirs.append(sub_dir)
+    # Only search in the specific save_dir for this config
+    pattern = os.path.join(save_dir, 'checkpoint_epoch_*.pth.tar')
+    files = glob.glob(pattern)
 
-    all_files = []
-    for dir_path in search_dirs:
-        pattern = os.path.join(dir_path, 'checkpoint_epoch_*.pth.tar')
-        files = glob.glob(pattern)
-        all_files.extend(files)
-
-    if not all_files:
+    if not files:
         return None
 
-    all_files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
-    return all_files[-1]
+    files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+    return files[-1]
+
+def build_model(cfg: dict):
+    backbone = cfg['model'].get('backbone', 'resnet101').lower()
+    common_kwargs = {
+        'num_classes': NUM_CLASSES,
+        't': cfg['model']['t'],
+        'pretrained': cfg['model']['pretrained'],
+        'adj_file': cfg['data']['adj'],
+        'in_channel': cfg['model']['gcn_in'],
+        'inp_file': cfg['data']['word_vec'],
+    }
+
+    if backbone == 'resnet101':
+        return gcn_resnet101(**common_kwargs)
+    if backbone == 'swin_t':
+        return gcn_swin_t(**common_kwargs)
+
+    raise ValueError(f"Unsupported backbone: {backbone}")
 
 def main():
     parser = argparse.ArgumentParser(description='Train GCN on CheXpert')
@@ -126,14 +133,7 @@ def main():
         print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model = gcn_resnet101(
-        num_classes=NUM_CLASSES,
-        t=cfg['model']['t'],
-        pretrained=cfg['model']['pretrained'],
-        adj_file=cfg['data']['adj'],
-        in_channel=cfg['model']['gcn_in'],
-        inp_file=cfg['data']['word_vec'],
-    )
+    model = build_model(cfg)
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────
     criterion = build_criterion(cfg)
