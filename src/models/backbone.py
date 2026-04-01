@@ -52,23 +52,3 @@ def get_swin_backbone(
     out_dim: int = 2048,
 ) -> SwinBackbone:
     return SwinBackbone(model_name, pretrained=pretrained, out_dim=out_dim)
-
-
-# ── Quick shape verification ──────────────────────────────────────────────────
-if __name__ == "__main__":
-    backbone = get_swin_backbone(pretrained=False)  # pretrained=False để test nhanh
-    backbone.eval()
-
-    dummy = torch.zeros(2, 3, 224, 224)
-    with torch.no_grad():
-        tokens = backbone.swin(dummy)
-        print(f"After swin (feature map)   : {tuple(tokens.shape)}")   # (2, 768, 7, 7)
-        tokens = tokens.permute(0, 3, 1, 2)
-        print(f"After permute              : {tuple(tokens.shape)}")   # (2, 768, 7, 7)
-        pooled = backbone.pool(tokens).squeeze(-1).squeeze(-1)
-        print(f"After AdaptiveAvgPool2d    : {tuple(pooled.shape)}")   # (2, 768)
-
-        out = backbone.proj(pooled)
-        print(f"Final output               : {tuple(out.shape)}")       # (2, 2048)
-
-    print("\n✓ Shape confirmed: (B,3,224,224) → (B,2048)")
