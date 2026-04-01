@@ -40,7 +40,9 @@ class SwinBackbone(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, 3, 224, 224)
-        tokens = self.swin(x)                        # (B, 768, 7, 7)        tokens = tokens.permute(0, 3, 1, 2)         # (B, 768, 7, 7)        pooled = self.pool(tokens)                   # (B, 768, 1, 1)
+        tokens = self.swin(x)                        # (B, 7, 7, 768)
+        tokens = tokens.permute(0, 3, 1, 2)         # (B, 768, 7, 7)
+        pooled = self.pool(tokens)                   # (B, 768, 1, 1)
         pooled = pooled.squeeze(-1).squeeze(-1)      # (B, 768)
         out = self.proj(pooled)                      # (B, 2048)
         return out
