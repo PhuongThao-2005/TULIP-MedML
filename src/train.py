@@ -5,6 +5,8 @@ import sys
 import torch
 import torch.nn as nn
 import yaml
+import glob
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,12 +33,25 @@ def find_latest_checkpoint(save_dir):
     if not os.path.exists(save_dir):
         return None
 
-    files = [f for f in os.listdir(save_dir) if f.startswith("checkpoint_epoch")]
-    if not files:
+    # Also search in parent directory and subfolders c1, c2, c3, c4, c5, test
+    parent_dir = os.path.dirname(save_dir)
+    search_dirs = [save_dir, parent_dir]
+    for sub in ['c1', 'c2', 'c3', 'c4', 'c5', 'test']:
+        sub_dir = os.path.join(parent_dir, sub)
+        if os.path.exists(sub_dir):
+            search_dirs.append(sub_dir)
+
+    all_files = []
+    for dir_path in search_dirs:
+        pattern = os.path.join(dir_path, 'checkpoint_epoch_*.pth.tar')
+        files = glob.glob(pattern)
+        all_files.extend(files)
+
+    if not all_files:
         return None
 
-    files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
-    return os.path.join(save_dir, files[-1])
+    all_files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+    return all_files[-1]
 
 def main():
     parser = argparse.ArgumentParser(description='Train GCN on CheXpert')
@@ -107,6 +122,7 @@ def main():
 
     # ── Engine state ──────────────────────────────────────────────────────────
     os.makedirs(cfg['output']['save_dir'], exist_ok=True)
+    os.makedirs(cfg['output']['log_dir'], exist_ok=True)
     resume_path = find_latest_checkpoint(cfg['output']['save_dir'])
     if resume_path:
         print(f"Auto-resume from: {resume_path}")
@@ -119,6 +135,7 @@ def main():
         'workers'           : cfg['train']['workers'],
         'epoch_step'        : cfg['train']['epoch_step'],
         'save_model_path'   : cfg['output']['save_dir'],
+        'log_dir'           : cfg['output']['log_dir'],
         'print_freq'        : 100,
         'use_pb'            : True,
         'difficult_examples': False,
@@ -169,7 +186,7 @@ def main():
 
     print('\n=== Validation (Uncertain split) ===')
     results_unc = evaluate(raw_model, val_unc_loader, device=device)
-    print_metrics(results_unc, show_unc=True)
+    print_metrics(results_unc)
 
 
 if __name__ == '__main__':

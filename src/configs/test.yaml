@@ -31,5 +31,5 @@ train:
   workers:     4
 
 output:
-  save_dir: /kaggle/working/checkpoints/c1
-  log_dir:  /kaggle/working/logs/c1
+  save_dir: /kaggle/working/checkpoints/test
+  log_dir:  /kaggle/working/logs/test

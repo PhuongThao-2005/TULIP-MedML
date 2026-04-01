@@ -1,6 +1,7 @@
 import os
 import shutil
 import time
+import logging
 
 import numpy as np
 from tqdm import tqdm
@@ -61,6 +62,26 @@ class Engine:
     def __init__(self, state: dict = {}):
         self.state = state
 
+        # Configure logging if log_dir is provided
+        log_dir = self._state('log_dir')
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, 'training.log')
+            logging.basicConfig(
+                filename=log_file,
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                filemode='a'  # append mode
+            )
+            self.logger = logging.getLogger(__name__)
+        else:
+            # Fallback to console logging
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s'
+            )
+            self.logger = logging.getLogger(__name__)
+
         defaults = {
             'use_gpu'     : torch.cuda.is_available(),
             'image_size'  : 224,
@@ -69,7 +90,7 @@ class Engine:
             'device_ids'  : None,   # None → use all GPUs
             'evaluate'    : False,  # True → validate only, no training
             'start_epoch' : 0,
-            'max_epochs'  : 90,
+            'max_epochs' : 90,
             'epoch_step'  : [],     # epochs at which to decay lr × 0.1
             'use_pb'      : True,
             'print_freq'  : 0,
@@ -417,14 +438,25 @@ class Engine:
         if self._state('save_model_path') is None:
             return None
 
-        pattern = os.path.join(self.state['save_model_path'], 'checkpoint_epoch_*.pth.tar')
-        files = glob.glob(pattern)
+        save_dir = self.state['save_model_path']
+        parent_dir = os.path.dirname(save_dir)
+        search_dirs = [save_dir, parent_dir]
+        for sub in ['c1', 'c2', 'c3', 'c4', 'c5', 'test']:
+            sub_dir = os.path.join(parent_dir, sub)
+            if os.path.exists(sub_dir):
+                search_dirs.append(sub_dir)
 
-        if not files:
+        all_files = []
+        for dir_path in search_dirs:
+            pattern = os.path.join(dir_path, 'checkpoint_epoch_*.pth.tar')
+            files = glob.glob(pattern)
+            all_files.extend(files)
+
+        if not all_files:
             return None
 
-        files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        return files[-1]
+        all_files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+        return all_files[-1]
 
 
 # ─── Multi-label mAP Engine ──────────────────────────────────────────────────
@@ -555,6 +587,8 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             if display:
                 print(f'Epoch: [{self.state["epoch"]}]\t'
                       f'Loss {loss:.4f}\tmAP {map_val:.3f}')
+            # Log training metrics
+            self.logger.info(f'Training Epoch {self.state["epoch"]} - Loss: {loss:.4f}, mAP: {map_val:.3f}')
             return map_val
 
         # Validation
@@ -584,8 +618,10 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
 
         if display:
             print(f'\nVal:\tLoss {loss:.4f}')
-            loss_type = self.state.get('loss_type', 'bce')
-            print_metrics(results, show_unc=(loss_type == 'ua_asl'))
+            print_metrics(results)
+
+        # Log evaluation results
+        self.logger.info(f'Validation Results - Loss: {loss:.4f}, mAP: {results["map"]}, Mean AUC: {results["mean_auc"]}, Unc AUC: {results["unc_auc"]}')
 
         # Dùng mAP làm primary score để chọn checkpoint (khớp proposal).
         # Fallback mean_auc nếu mAP không tính được.
