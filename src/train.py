@@ -12,6 +12,7 @@ from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
 from src.models.gcn import gcn_resnet101
 from src.evaluate import evaluate, print_metrics
+from src.loss.ua_asl import UncertaintyAwareASL
 
 
 def load_cfg(path: str) -> dict:
@@ -26,6 +27,26 @@ def build_optimizer(model, cfg: dict) -> torch.optim.Optimizer:
         momentum=cfg['train']['momentum'],
         weight_decay=cfg['train']['weight_decay'],
     )
+
+
+def build_criterion(cfg: dict) -> nn.Module:
+    loss_cfg = cfg.get('loss', {})
+    loss_type = loss_cfg.get('type', 'bce').lower()
+
+    if loss_type == 'bce':
+        return nn.BCEWithLogitsLoss()
+
+    if loss_type == 'ua_asl':
+        return UncertaintyAwareASL(
+            gamma_pos=loss_cfg.get('gamma_pos', 0.0),
+            gamma_neg=loss_cfg.get('gamma_neg', 4.0),
+            margin=loss_cfg.get('margin', 0.05),
+            lambda_unc=loss_cfg.get('lambda_unc', 0.5),
+            alpha=loss_cfg.get('alpha', 0.5),
+            reduction=loss_cfg.get('reduction', 'mean'),
+        )
+
+    raise ValueError(f"Unsupported loss type: {loss_type}")
 
 def find_latest_checkpoint(save_dir):
     if not os.path.exists(save_dir):
@@ -100,9 +121,7 @@ def main():
     )
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────
-    # BCEWithLogitsLoss works on {0, 1} labels produced by on_start_batch
-    # (uncertain -1 is remapped to 0 = treat as negative for loss).
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = build_criterion(cfg)
     optimizer = build_optimizer(model, cfg)
 
     # ── Engine state ──────────────────────────────────────────────────────────
