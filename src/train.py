@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
-from src.models.gcn import gcn_resnet101
+from src.models.gcn import gcn_resnet101, gcn_swin_t
 from src.evaluate import evaluate, print_metrics
 from src.loss.ua_asl import UncertaintyAwareASL
 
@@ -49,6 +49,25 @@ def build_criterion(cfg: dict) -> nn.Module:
         )
 
     raise ValueError(f"Unsupported loss type: {loss_type}")
+
+
+def build_model(cfg: dict):
+    backbone = cfg['model'].get('backbone', 'resnet101').lower()
+    common_kwargs = {
+        'num_classes': NUM_CLASSES,
+        't': cfg['model']['t'],
+        'pretrained': cfg['model']['pretrained'],
+        'adj_file': cfg['data']['adj'],
+        'in_channel': cfg['model']['gcn_in'],
+        'inp_file': cfg['data']['word_vec'],
+    }
+
+    if backbone == 'resnet101':
+        return gcn_resnet101(**common_kwargs)
+    if backbone == 'swin_t':
+        return gcn_swin_t(**common_kwargs)
+
+    raise ValueError(f"Unsupported backbone: {backbone}")
 
 def find_latest_checkpoint(save_dir):
     if not os.path.exists(save_dir):
@@ -126,14 +145,7 @@ def main():
         print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model = gcn_resnet101(
-        num_classes=NUM_CLASSES,
-        t=cfg['model']['t'],
-        pretrained=cfg['model']['pretrained'],
-        adj_file=cfg['data']['adj'],
-        in_channel=cfg['model']['gcn_in'],
-        inp_file=cfg['data']['word_vec'],
-    )
+    model = build_model(cfg)
 
     # ── Loss & optimiser ──────────────────────────────────────────────────────
     criterion = build_criterion(cfg)

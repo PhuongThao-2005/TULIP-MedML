@@ -3,6 +3,7 @@ from torch.nn import Parameter
 from src.util import *
 import torch
 import torch.nn as nn
+from src.models.backbone import SwinTBackbone
 
 
 class GraphConvolution(nn.Module):
@@ -108,3 +109,62 @@ class GCNResnet(nn.Module):
 def gcn_resnet101(num_classes, t, pretrained=False, adj_file=None, in_channel=300, inp_file=None):
     model = models.resnet101(pretrained=pretrained)
     return GCNResnet(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
+
+
+class GCNSwinT(nn.Module):
+    def __init__(self, model, num_classes, in_channel=300, t=0, adj_file=None, inp_file=None):
+        super(GCNSwinT, self).__init__()
+        self.features = model
+        self.num_classes = num_classes
+
+        self.gc1 = GraphConvolution(in_channel, 1024)
+        self.gc2 = GraphConvolution(1024, 2048)
+        self.relu = nn.LeakyReLU(0.2)
+
+        _adj = gen_A(num_classes, t, adj_file)
+        self.A = Parameter(torch.from_numpy(_adj).float())
+
+        self.image_normalization_mean = model.image_normalization_mean
+        self.image_normalization_std = model.image_normalization_std
+
+        if inp_file:
+            inp_np = np.load(inp_file).astype(np.float32)
+            if inp_np.ndim != 2 or inp_np.shape[0] != num_classes:
+                raise ValueError(
+                    f'Expected embedding shape ({num_classes}, D), got {inp_np.shape}'
+                )
+            if inp_np.shape[1] != in_channel:
+                raise ValueError(
+                    f'Embedding dim mismatch: file has {inp_np.shape[1]} but in_channel={in_channel}'
+                )
+            inp = torch.from_numpy(inp_np)
+        else:
+            inp = torch.zeros(num_classes, in_channel)
+        self.register_buffer('inp', inp)
+
+    def forward(self, feature):
+        feature = self.features(feature)  # (B, 2048)
+        if feature.dim() > 2:
+            feature = feature.view(feature.size(0), -1)
+
+        adj = gen_adj(self.A).detach()
+        x = self.gc1(self.inp, adj)
+        x = self.relu(x)
+        x = self.gc2(x, adj)
+        x = self.relu(x)
+
+        x = x.transpose(0, 1)
+        x = torch.matmul(feature, x)
+        return x
+
+    def get_config_optim(self, lr, lrp):
+        return [
+            {'params': self.features.parameters(), 'lr': lr * lrp},
+            {'params': self.gc1.parameters(), 'lr': lr},
+            {'params': self.gc2.parameters(), 'lr': lr},
+        ]
+
+
+def gcn_swin_t(num_classes, t, pretrained=False, adj_file=None, in_channel=300, inp_file=None):
+    model = SwinTBackbone(pretrained=pretrained)
+    return GCNSwinT(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
