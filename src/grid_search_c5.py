@@ -149,7 +149,7 @@ def _run_one(
     gamma_pos: float,
     gamma_neg: float,
     lambda_unc: float,
-    train_subset: Subset,
+    train_ds: CheXpert,
     val_ds: CheXpert,
     device: str,
     n_epochs: int,
@@ -199,11 +199,11 @@ def _run_one(
     workers  = cfg["train"]["workers"]
 
     # Inject transforms into datasets
-    train_subset.dataset.transform = get_train_transform(img_size)
+    train_ds.transform = get_train_transform(img_size)
     val_ds.transform = get_val_transform(img_size)
 
     train_loader = DataLoader(
-        train_subset, batch_size=bs, shuffle=True,
+        train_ds, batch_size=bs, shuffle=True,
         num_workers=workers, pin_memory=(device == "cuda"),
     )
     val_loader = DataLoader(
@@ -464,17 +464,19 @@ def run_grid_search(
     config_path: str,
     data_root: str | None = None,
     n_epochs: int | None = None,
-    subset_pct: float | None = None,
     dry_run: bool = False,
 ) -> tuple[list[dict], dict]:
     """
     Main entry point — usable from both CLI and notebooks.
 
+    Train data is read directly from cfg['data']['train_csv']
+    (e.g. train_small_v3.csv which is already a pre-sampled 2000-image subset).
+    No further stratified sampling is applied.
+
     Args:
         config_path:  path to YAML config (e.g. 'configs/c5_tulip.yaml')
         data_root:    override cfg['data']['root'] if provided
         n_epochs:     override cfg['grid_search']['epochs_per_run']
-        subset_pct:   override cfg['grid_search']['subset_pct'] (default 0.20)
         dry_run:      skip actual training, write fake results (for pipeline testing)
 
     Returns:
@@ -484,11 +486,10 @@ def run_grid_search(
     cfg = load_cfg(config_path)
     set_seed(cfg["seed"])
 
-    root       = data_root or cfg["data"]["root"]
-    gs_cfg     = cfg.get("grid_search", {})
-    n_epochs   = n_epochs   or gs_cfg.get("epochs_per_run", 5)
-    subset_pct = subset_pct or gs_cfg.get("subset_pct",     0.20)
-    device     = "cuda" if torch.cuda.is_available() else "cpu"
+    root     = data_root or cfg["data"]["root"]
+    gs_cfg   = cfg.get("grid_search", {})
+    n_epochs = n_epochs or gs_cfg.get("epochs_per_run", 5)
+    device   = "cuda" if torch.cuda.is_available() else "cpu"
 
     gp_list  = gs_cfg.get("gamma_pos",  [0, 1, 2])
     gn_list  = gs_cfg.get("gamma_neg",  [2, 3, 4])
@@ -499,12 +500,11 @@ def run_grid_search(
     print(f"Grid size     : {len(grid)}  runs  "
           f"(γ+={gp_list} × γ-={gn_list} × λu={lu_list})")
     print(f"Epochs / run  : {n_epochs}")
-    print(f"Subset        : {int(subset_pct*100)}% stratified\n")
 
-    # ── Datasets ──────────────────────────────────────────────────────────────
-    full_train_ds = CheXpert(
+    # ── Datasets — load directly, no further sampling ─────────────────────────
+    train_ds = CheXpert(
         root=root,
-        csv_file=cfg["data"]["train_csv"],
+        csv_file=cfg["data"]["train_csv"],   # train_small_v3.csv (~2000 images)
         inp_name=cfg["data"]["word_vec"],
         uncertain="keep",
     )
@@ -515,9 +515,7 @@ def run_grid_search(
         uncertain="keep",
     )
 
-    train_subset = stratified_subset(full_train_ds, pct=subset_pct,
-                                     seed=cfg["seed"])
-    print(f"Train subset  : {len(train_subset):,} / {len(full_train_ds):,} samples")
+    print(f"Train (v3)    : {len(train_ds):,} samples  <- read as-is from train_csv")
     print(f"Val uncertain : {len(val_ds):,} samples\n")
 
     # ── Run grid ──────────────────────────────────────────────────────────────
@@ -538,7 +536,7 @@ def run_grid_search(
 
         res = _run_one(
             cfg=cfg, gamma_pos=gp, gamma_neg=gn, lambda_unc=lu,
-            train_subset=train_subset, val_ds=val_ds,
+            train_ds=train_ds, val_ds=val_ds,
             device=device, n_epochs=n_epochs,
             run_id=run_id, total_runs=len(grid),
         )
@@ -598,8 +596,7 @@ def main():
                         help="Override cfg.data.root")
     parser.add_argument("--epochs",      type=int, default=None,
                         help="Override epochs_per_run (default: from config)")
-    parser.add_argument("--subset_pct",  type=float, default=None,
-                        help="Fraction of train data to use (default: 0.20)")
+
     parser.add_argument("--dry_run",     action="store_true",
                         help="Skip training — smoke-test pipeline only")
     args = parser.parse_args()
@@ -608,7 +605,6 @@ def main():
         config_path=args.config,
         data_root=args.data_root,
         n_epochs=args.epochs,
-        subset_pct=args.subset_pct,
         dry_run=args.dry_run,
     )
 
