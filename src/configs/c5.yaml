@@ -20,9 +20,9 @@ model:
 
 loss:
   type:       ua_asl
-  gamma_pos:  0
-  gamma_neg:  4
-  lambda_unc: 0.5
+  gamma_pos:  2
+  gamma_neg:  2
+  lambda_unc: 0.3
 
 train:
   epochs:      20
