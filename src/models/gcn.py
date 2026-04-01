@@ -68,8 +68,16 @@ class GCNResnet(nn.Module):
         self.image_normalization_std = [0.229, 0.224, 0.225]
 
         if inp_file:
-            inp = torch.from_numpy(
-                np.load(inp_file).astype(np.float32))  # (14, 300)
+            inp_np = np.load(inp_file).astype(np.float32)
+            if inp_np.ndim != 2 or inp_np.shape[0] != num_classes:
+                raise ValueError(
+                    f'Expected embedding shape ({num_classes}, D), got {inp_np.shape}'
+                )
+            if inp_np.shape[1] != in_channel:
+                raise ValueError(
+                    f'Embedding dim mismatch: file has {inp_np.shape[1]} but in_channel={in_channel}'
+                )
+            inp = torch.from_numpy(inp_np)
         else:
             inp = torch.zeros(num_classes, in_channel)
         self.register_buffer('inp', inp)

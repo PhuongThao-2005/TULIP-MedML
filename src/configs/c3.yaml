@@ -15,7 +15,7 @@ data:
 model:
   backbone:   resnet101
   pretrained: true
-  gcn_in:     512   # BiomedCLIP output 512 chiều, không phải 300
+  gcn_in:     512   # BiomedCLIP output 512 chiều
   t:          0.4
 
 loss:
