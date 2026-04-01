@@ -435,29 +435,16 @@ class Engine:
     def find_latest_checkpoint(self):
         import glob
 
-        if self._state('save_model_path') is None:
-            return None
-
         save_dir = self.state['save_model_path']
-        parent_dir = os.path.dirname(save_dir)
-        search_dirs = [save_dir, parent_dir]
-        for sub in ['c1', 'c2', 'c3', 'c4', 'c5', 'test']:
-            sub_dir = os.path.join(parent_dir, sub)
-            if os.path.exists(sub_dir):
-                search_dirs.append(sub_dir)
 
-        all_files = []
-        for dir_path in search_dirs:
-            pattern = os.path.join(dir_path, 'checkpoint_epoch_*.pth.tar')
-            files = glob.glob(pattern)
-            all_files.extend(files)
+        pattern = os.path.join(save_dir, 'checkpoint_epoch_*.pth.tar')
+        files = glob.glob(pattern)
 
-        if not all_files:
+        if not files:
             return None
 
-        all_files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
-        return all_files[-1]
-
+        files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+        return files[-1]
 
 # ─── Multi-label mAP Engine ──────────────────────────────────────────────────
 
