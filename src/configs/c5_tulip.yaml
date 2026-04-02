@@ -13,7 +13,7 @@ data:
   img_size:  224
 
 model:
-  backbone:   swin_t
+  backbone:   swin_base
   pretrained: true
   gcn_in:     512
   t:          0.4

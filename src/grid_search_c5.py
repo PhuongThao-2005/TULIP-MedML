@@ -51,7 +51,7 @@ import yaml
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.evaluate import compute_AUC_uncertain, compute_mAP, compute_mean_AUC
 from src.util import Warp
-from src.models.gcn import gcn_swin_t
+from src.models.gcn import gcn_swin_t, gcn_swin_base
 from src.loss.ua_asl import UncertaintyAwareASL
 
 
@@ -164,14 +164,27 @@ def _run_one(
     print(f"{'─'*55}")
 
     # ── Model ────────────────────────────────────────────────────────────────
-    model = gcn_swin_t(
-        num_classes=NUM_CLASSES,
-        t=cfg["model"]["t"],
-        pretrained=cfg["model"]["pretrained"],
-        adj_file=cfg["data"]["adj"],
-        in_channel=cfg["model"]["gcn_in"],
-        inp_file=cfg["data"]["word_vec"],
-    ).to(device)
+    backbone_name = cfg["model"].get("backbone", "swin_t").lower()
+    if backbone_name == "swin_base":
+        model = gcn_swin_base(
+            num_classes=NUM_CLASSES,
+            t=cfg["model"]["t"],
+            pretrained=cfg["model"]["pretrained"],
+            adj_file=cfg["data"]["adj"],
+            in_channel=cfg["model"]["gcn_in"],
+            inp_file=cfg["data"]["word_vec"],
+        ).to(device)
+    elif backbone_name == "swin_t":
+        model = gcn_swin_t(
+            num_classes=NUM_CLASSES,
+            t=cfg["model"]["t"],
+            pretrained=cfg["model"]["pretrained"],
+            adj_file=cfg["data"]["adj"],
+            in_channel=cfg["model"]["gcn_in"],
+            inp_file=cfg["data"]["word_vec"],
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported backbone in grid_search: {backbone_name}")
 
     # ── Loss ─────────────────────────────────────────────────────────────────
     criterion = UncertaintyAwareASL(

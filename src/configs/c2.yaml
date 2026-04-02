@@ -13,7 +13,7 @@ data:
   img_size:  224   # Swin-T pretrained trên 224, không phải 448
 
 model:
-  backbone:   swin_t   #  thay đổi duy nhất so với C1
+  backbone:   swin_base   #  thay đổi duy nhất so với C1
   pretrained: true
   gcn_in:     300
   t:          0.4

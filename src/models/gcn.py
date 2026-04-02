@@ -144,3 +144,12 @@ def gcn_swin_t(num_classes, t, pretrained=True, adj_file=None, in_channel=768, i
         out_dim=2048,         # projection head align với GCN
     )
     return GCNSwin(backbone, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
+
+
+def gcn_swin_base(num_classes, t, pretrained=True, adj_file=None, in_channel=768, inp_file=None):
+    backbone = get_swin_backbone(
+        "swin_base_patch4_window7_224",
+        pretrained=pretrained,
+        out_dim=2048,         # projection head align với GCN
+    )
+    return GCNSwin(backbone, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)

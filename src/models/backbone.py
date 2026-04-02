@@ -32,11 +32,16 @@ class SwinBackbone(nn.Module):
             global_pool="",   # ← quan trọng: không pool, giữ spatial feature map
         )
 
+        # timm Swin variants have different channel dims:
+        # - tiny: num_features = 768
+        # - base: num_features = 1024
+        in_dim = getattr(self.swin, "num_features", embed_dim)
+
         # Pool spatial dims → 1x1
         self.pool = nn.AdaptiveAvgPool2d((1, 1))     # input (B, C, H, W) → (B, C, 1, 1)
 
         # Project 768 → 2048 để align với GCN classifier head
-        self.proj = nn.Linear(embed_dim, out_dim)
+        self.proj = nn.Linear(in_dim, out_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, 3, 224, 224)
