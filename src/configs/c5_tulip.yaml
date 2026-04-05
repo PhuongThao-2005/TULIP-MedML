@@ -1,4 +1,4 @@
-# C5: Swin-T + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+# C5: Swin-T + BiomedCLIP + UA-ASL
 name: C5_tulip_medml
 seed: 42
 
@@ -26,24 +26,24 @@ loss:
   lambda_unc: 0.5
   alpha:      0.5
   reduction:  'mean'
-  disable_torch_grad_focal_loss: True
+  disable_torch_grad_focal_loss: true
 
 train:
   epochs:      20
   batch_size:  16
-  lr:          0.01   # Swin-T lr nhỏ
+  lr:          0.01
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
-  epoch_step:  [12 , 17]
+  epoch_step:  [12, 17]
   workers:     4
 
 grid_search:
-  epochs_per_run: 5          
-  n_subset_pct:   0.10       # 10% stratified của train_small_v2
-  gamma_pos:      [0, 1, 2]
-  gamma_neg:      [2, 3, 4]
+  epochs_per_run: 5
+  gamma_neg:      [2, 4, 6]    # bỏ gamma_pos (fixed=0), thêm giá trị cao hơn cho imbalance nặng
   lambda_unc:     [0.3, 0.5, 0.7]
+  alpha:          [0.3, 0.5] 
+
 output:
   save_dir: /kaggle/working/checkpoints/c5
   log_dir:  /kaggle/working/logs/c5
