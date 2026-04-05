@@ -163,7 +163,7 @@ def _run_one(
         disable_torch_grad_focal_loss=True,
     )
 
-    # ── Optimiser — SGD ───────────────────────────────────────────────────────
+    # ── Optimiser — SGD (fixed LR over epochs; no scheduler) ──────────────────
     lr  = cfg["train"]["lr"]
     lrp = cfg["train"]["lrp"]
     optimizer = torch.optim.SGD(
@@ -171,13 +171,6 @@ def _run_one(
         lr=lr,
         momentum=cfg["train"]["momentum"],
         weight_decay=cfg["train"]["weight_decay"],
-    )
-
-    # ── Scheduler — MultiStepLR at 60% and 85% of n_epochs ───────────────────
-    step1 = max(1, round(n_epochs * 0.60))
-    step2 = max(step1 + 1, round(n_epochs * 0.85))
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[step1, step2], gamma=lrp,
     )
 
     # ── Data ──────────────────────────────────────────────────────────────────
@@ -220,7 +213,6 @@ def _run_one(
         avg_loss   = running_loss / max(n_batch, 1)
         current_lr = optimizer.param_groups[0]["lr"]
         print(f"  epoch {epoch+1:02d}/{n_epochs}  loss={avg_loss:.4f}  lr={current_lr:.2e}")
-        scheduler.step()
 
     # ── Evaluation on val_uncertain ───────────────────────────────────────────
     model.eval()
