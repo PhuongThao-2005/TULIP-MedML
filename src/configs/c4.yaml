@@ -20,9 +20,13 @@ model:
 
 loss:
   type:       ua_asl   #  thay đổi duy nhất so với C1
-  gamma_pos:  2
-  gamma_neg:  2
-  lambda_unc: 0.3
+  gamma_pos:  0.0
+  gamma_neg:  4.0
+  margin:     0.05
+  lambda_unc: 0.5
+  alpha:      0.5
+  reduction:  'mean'
+  disable_torch_grad_focal_loss: True
 
 train:
   epochs:      20
@@ -31,7 +35,7 @@ train:
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
-  epoch_step:  [30]
+  epoch_step:  [10, 16]
   workers:     4
 
 output:
