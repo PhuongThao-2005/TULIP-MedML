@@ -1,4 +1,4 @@
-# C5: Swin-T + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+# C5: Swin-Base + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
 name: C5_tulip_medml
 seed: 42
 
@@ -13,7 +13,7 @@ data:
   img_size:  224
 
 model:
-  backbone:   swin_t
+  backbone:   swin_b
   pretrained: true
   gcn_in:     512
   t:          0.4

@@ -102,7 +102,7 @@ def gcn_resnet101(num_classes, t, pretrained=False, adj_file=None, in_channel=30
     return GCNResnet(model, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
 
 class GCNSwin(nn.Module):
-    def __init__(self, backbone, num_classes, in_channel=768, t=0,
+    def __init__(self, backbone, num_classes, in_channel=512, t=0,
                  adj_file=None, inp_file=None):
         super().__init__()
         self.features = backbone          # SwinBackbone → (B, 2048)
@@ -137,10 +137,19 @@ class GCNSwin(nn.Module):
             {'params': self.gc2.parameters(), 'lr': lr},
         ]
         
-def gcn_swin_t(num_classes, t, pretrained=True, adj_file=None, in_channel=768, inp_file=None):
+def gcn_swin_t(num_classes, t, pretrained=True, adj_file=None, in_channel=512, inp_file=None):
     backbone = get_swin_backbone(
         "swin_tiny_patch4_window7_224",
         pretrained=pretrained,
-        out_dim=2048,         # projection head align với GCN
+        out_dim=2048,
+    )
+    return GCNSwin(backbone, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
+
+
+def gcn_swin_b(num_classes, t, pretrained=True, adj_file=None, in_channel=512, inp_file=None):
+    backbone = get_swin_backbone(
+        "swin_base_patch4_window7_224",
+        pretrained=pretrained,
+        out_dim=2048,
     )
     return GCNSwin(backbone, num_classes, t=t, adj_file=adj_file, in_channel=in_channel, inp_file=inp_file)
