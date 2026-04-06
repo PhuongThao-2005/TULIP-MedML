@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.chexpert import CheXpert, NUM_CLASSES
 from src.engine import GCNMultiLabelMAPEngine
-from src.models.gcn import gcn_resnet101, gcn_swin_t
+from src.models.gcn import gcn_resnet101, gcn_swin_t, gcn_swin_b
 from src.evaluate import evaluate, print_metrics
 from src.loss.ua_asl import UncertaintyAwareASL
 
@@ -78,6 +78,8 @@ def build_model(cfg: dict):
         return gcn_resnet101(**common_kwargs)
     if backbone == 'swin_t':
         return gcn_swin_t(**common_kwargs)
+    if backbone == 'swin_b':
+        return gcn_swin_b(**common_kwargs)
 
     raise ValueError(f"Unsupported backbone: {backbone}")
 

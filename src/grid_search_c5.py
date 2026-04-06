@@ -1,7 +1,7 @@
 """
 grid_search_c5.py
 =================
-Grid search over UA-ASL hyperparameters for C5 (Swin-T + BioMedCLIP + UA-ASL).
+Grid search over UA-ASL hyperparameters for C5 (Swin-Tiny + BioMedCLIP + UA-ASL).
 
 Grid:
     γ+  = 0  (fixed — paper recommendation)

@@ -1,4 +1,4 @@
-# C2: Swin-T + GloVe + BCE  <- thay backbone
+# C2: Swin-Base + GloVe + BCE  <- thay backbone
 name: C2_swin
 seed: 42
 
@@ -10,10 +10,10 @@ data:
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
   uncertain: keep
-  img_size:  224   # Swin-T pretrained trên 224, không phải 448
+  img_size:  224   # Swin pretrained trên 224
 
 model:
-  backbone:   swin_t   #  thay đổi duy nhất so với C1
+  backbone:   swin_b   #  thay đổi duy nhất so với C1 (Swin-Base)
   pretrained: true
   gcn_in:     300
   t:          0.4
@@ -22,13 +22,13 @@ loss:
   type: bce
 
 train:
-  epochs:      20
+  epochs:      40
   batch_size:  16
-  lr:          0.01   # Swin-T dùng lr nhỏ hơn ResNet - transformer nhạy hơn
+  lr:          0.01
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
-  epoch_step:  []
+  epoch_step:  [30]
   workers:     4
 
 output:
