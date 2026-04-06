@@ -29,13 +29,13 @@ loss:
   disable_torch_grad_focal_loss: True
 
 train:
-  epochs:      20
+  epochs:      40
   batch_size:  16
   lr:          0.01   
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
-  epoch_step:  []
+  epoch_step:  [30]
   workers:     4
 
 output:
