@@ -81,9 +81,10 @@ def parse_gpu_ids(cfg, args_gpu_ids):
 def build_checkpoint_search_dirs(cfg, save_dir):
     search_dirs = [save_dir]
     search_dirs.extend(cfg.get('output', {}).get('resume_dirs', []))
-    # Common Kaggle locations used when copying checkpoints from input datasets.
     search_dirs.extend([
+        '/kaggle/working/checkpoints/add_gcn',
         '/kaggle/working/checkpoints/addgcn_baseline',
+        '/kaggle/working/checkpoints/addgcn',
     ])
     unique_dirs = []
     seen = set()
@@ -338,17 +339,24 @@ def main():
             train_targets = to_train_targets(labels)
             try:
                 out1, out2 = model(imgs)
+                # Ensure tensor layout is contiguous after DataParallel
+                out1 = out1.contiguous()
+                out2 = out2.contiguous()
+                logits = (out1 + out2) / 2.0
+                loss = criterion(logits, train_targets)
             except torch.AcceleratorError as e:
                 if isinstance(model, torch.nn.DataParallel) and not args.no_dp_fallback:
-                    print('DataParallel failed with AcceleratorError, falling back to single GPU (device 0).')
-                    print(f'AcceleratorError: {e}')
+                    print('\n' + '='*80)
+                    print('DataParallel AcceleratorError detected, falling back to single GPU.')
+                    print(f'Error: {e}')
+                    print('='*80 + '\n')
                     model = model.module.to(device)
                     model.train()
                     out1, out2 = model(imgs)
+                    logits = (out1 + out2) / 2.0
+                    loss = criterion(logits, train_targets)
                 else:
                     raise
-            logits = (out1 + out2) / 2.0
-            loss = criterion(logits, train_targets)
 
             optimizer.zero_grad()
             loss.backward()
