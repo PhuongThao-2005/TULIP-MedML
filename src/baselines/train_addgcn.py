@@ -229,7 +229,7 @@ def main():
         results = evaluate_addgcn(model, val_loader, criterion, device)
         print_metrics(results)
 
-        score = results['mean_auc'] if results['mean_auc'] is not None else (results['map'] or -1.0)
+        score = results['map'] if results['map'] is not None else -1.0
         running_best = max(best_score, score)
         ckpt_path = os.path.join(save_dir, f'checkpoint_epoch_{epoch}.pth.tar')
         save_checkpoint(ckpt_path, model, optimizer, epoch, running_best)
@@ -237,14 +237,14 @@ def main():
         if score > best_score:
             best_score = score
             save_checkpoint(os.path.join(save_dir, 'model_best.pth.tar'), model, optimizer, epoch, best_score)
-            print(f'New best score: {best_score:.4f}')
+            print(f'New best mAP: {best_score:.4f}')
 
         if val_unc_loader is not None:
             print('\n=== Validation (Uncertain split) ===')
             results_unc = evaluate_addgcn(model, val_unc_loader, criterion, device)
             print_metrics(results_unc)
 
-    print(f'Finished training. Best score = {best_score:.4f}')
+    print(f'Finished training. Best mAP = {best_score:.4f}')
 
 
 if __name__ == '__main__':
