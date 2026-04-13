@@ -103,6 +103,7 @@ def main():
     parser.add_argument('--config', required=True, help='Path to baseline config YAML')
     parser.add_argument('--evaluate', action='store_true', help='Only run evaluation')
     parser.add_argument('--resume', default='', help='Checkpoint path for resume/eval')
+    parser.add_argument('--subset', type=int, default=None, help='Use only N images for quick smoke-test')
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
@@ -138,6 +139,15 @@ def main():
             split='val',
             transform=get_transform('val', size=cfg['data']['img_size']),
         )
+
+    if args.subset:
+        n_val = max(50, args.subset // 9)
+        train_ds.df = train_ds.df.head(args.subset).reset_index(drop=True)
+        val_ds.df = val_ds.df.head(n_val).reset_index(drop=True)
+        if val_unc_ds is not None:
+            val_unc_ds.df = val_unc_ds.df.head(n_val).reset_index(drop=True)
+        print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val / '
+              f'{len(val_unc_ds) if val_unc_ds is not None else 0} val_unc')
 
     train_loader = build_loader(train_ds, cfg['train']['batch_size'], cfg['train']['workers'], True)
     val_loader = build_loader(val_ds, cfg['train']['batch_size'], cfg['train']['workers'], False)
