@@ -1,5 +1,5 @@
 name: ADDGCN_Baseline
-seed: 42
+seed: 1
 
 data:
   root: /kaggle/input/datasets/ashery/chexpert
@@ -8,7 +8,7 @@ data:
   val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
   word_vec: /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   uncertain: keep
-  img_size: 224
+  img_size: 448
 
 model:
   pretrained: true
@@ -17,7 +17,7 @@ train:
   epochs: 20
   batch_size: 16
   workers: 4
-  lr: 0.01
+  lr: 0.05
   lrp: 0.1
   momentum: 0.9
   weight_decay: 0.0001

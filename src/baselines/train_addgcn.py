@@ -41,7 +41,6 @@ def build_loader(dataset, batch_size, workers, shuffle):
 
 def to_train_targets(targets):
     targets = targets.clone()
-    targets[targets == 0] = 1
     targets[targets == -1] = 0
     return targets
 
