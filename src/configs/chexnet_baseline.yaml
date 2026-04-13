@@ -15,7 +15,7 @@ data:
 
 model:
   backbone:    "densenet121"
-  ckpt_path:   "/kaggle/input/chexnet-weights/model.pth.tar"
+  ckpt_path:   "/kaggle/input/datasets/phuongthao205/chexnet-weights"
   num_classes: 14
   pretrained:  true
 

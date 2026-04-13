@@ -25,7 +25,9 @@ import torch
 import torch.nn as nn
 import yaml
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Repo root = parent of `src/` (this file lives in src/baselines/)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, _REPO_ROOT)
 
 from src.data.chexpert import CheXpert
 from src.evaluate import evaluate, print_metrics
