@@ -98,6 +98,9 @@ class CheXNetEngine(MultiLabelMAPEngine):
             if display:
                 print(f'Epoch: [{self.state["epoch"]}]\t'
                       f'Loss {loss:.4f}\tmAP {map_val:.3f}')
+            self.logger.info(
+                f'Train Epoch {self.state["epoch"]} - Loss: {loss:.4f}, mAP: {map_val:.3f}'
+            )
             return map_val
 
         # ── Validation ──
@@ -106,6 +109,10 @@ class CheXNetEngine(MultiLabelMAPEngine):
 
         if not val_scores:
             print(f'Val:\tLoss {loss:.4f}  (no predictions)')
+            split = self.state.get('val_split', 'official')
+            self.logger.info(
+                f'Validation ({split}) - Loss: {loss:.4f}, no predictions'
+            )
             return 0.0
 
         scores  = np.concatenate(val_scores,  axis=0)
@@ -135,6 +142,15 @@ class CheXNetEngine(MultiLabelMAPEngine):
             if display:
                 lrs = [pg['lr'] for pg in scheduler.optimizer.param_groups]
                 print(f'  ReduceLROnPlateau: val_loss={loss:.4f}  lr={lrs}')
+
+        self.logger.info(
+            'Validation (%s) - Loss: %.4f, mAP: %s, Mean AUC: %s, Unc AUC: %s',
+            val_split,
+            loss,
+            results['map'],
+            results['mean_auc'],
+            results['unc_auc'],
+        )
 
         score = mAP if not np.isnan(mAP) else (mean_auc if not np.isnan(mean_auc) else 0.0)
         return float(score)
