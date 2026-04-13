@@ -290,10 +290,12 @@ class Engine:
 
             self.train(train_loader, model, criterion, optimizer, epoch)
             print("\n=== Val (Official) ===")
+            self.state['val_split'] = 'official'
             score = self.validate(val_loader, model, criterion)
 
             if val_unc_loader is not None:
                 print("\n=== Val (Uncertain) ===")
+                self.state['val_split'] = 'uncertain'
                 _ = self.validate(val_unc_loader, model, criterion)
 
             # Lưu checkpoint mỗi epoch, đánh dấu is_best nếu score tốt nhất

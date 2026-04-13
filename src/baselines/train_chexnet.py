@@ -129,7 +129,8 @@ class CheXNetEngine(MultiLabelMAPEngine):
             print_metrics(results)
 
         scheduler = self.state.get('scheduler')
-        if scheduler is not None:
+        val_split = self.state.get('val_split', 'official')
+        if scheduler is not None and val_split == 'official':
             scheduler.step(loss)
             if display:
                 lrs = [pg['lr'] for pg in scheduler.optimizer.param_groups]
