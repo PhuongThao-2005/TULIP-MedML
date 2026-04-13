@@ -1,0 +1,46 @@
+# configs/chexnet.yaml
+
+name: "chexnet_baseline"
+seed: 42
+
+data:
+  root:      /kaggle/input/datasets/ashery/chexpert
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small_v2.csv
+  val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
+  img_size:   224
+  uncertain:  "keep"
+  word_vec:   null
+  adj:        null
+
+model:
+  backbone:    "densenet121"
+  ckpt_path:   "/kaggle/input/chexnet-weights/model.pth.tar"
+  num_classes: 14
+  pretrained:  true
+
+loss:
+  type: "bce"
+
+train:
+  epochs:      20 
+  batch_size:  16           # ← paper gốc dùng 16
+  
+  # Adam — giống paper gốc
+  optimizer:   "adam"
+  lr:          0.001        # ← paper gốc
+  beta1:       0.9          # ← paper gốc
+  beta2:       0.999        # ← paper gốc
+
+  # ReduceLROnPlateau — giống paper gốc ("decayed by 10 when val loss plateaus")
+  scheduler:   "plateau"
+  lr_factor:   0.1
+  lr_patience: 3            # sau 3 epoch val loss không giảm → decay
+  lr_min:      1.0e-6       # floor để tránh lr → 0
+  epoch_step:  []           # không dùng adjust_learning_rate; LR do Plateau điều khiển
+
+  workers: 2
+
+output:
+  save_dir: "/kaggle/working/checkpoints/chexnet"
+  log_dir:  "/kaggle/working/logs/chexnet"
