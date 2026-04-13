@@ -81,9 +81,10 @@ def parse_gpu_ids(cfg, args_gpu_ids):
 def build_checkpoint_search_dirs(cfg, save_dir):
     search_dirs = [save_dir]
     search_dirs.extend(cfg.get('output', {}).get('resume_dirs', []))
-    # Common Kaggle locations used when copying checkpoints from input datasets.
     search_dirs.extend([
+        '/kaggle/working/checkpoints/add_gcn',
         '/kaggle/working/checkpoints/addgcn_baseline',
+        '/kaggle/working/checkpoints/addgcn',
     ])
     unique_dirs = []
     seen = set()
