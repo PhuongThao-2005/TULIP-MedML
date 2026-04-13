@@ -21,12 +21,38 @@ def load_cfg(path):
 
 
 def find_latest_checkpoint(save_dir):
-    pattern = os.path.join(save_dir, 'checkpoint_epoch_*.pth.tar')
-    files = glob.glob(pattern)
-    if not files:
+    if not save_dir or not os.path.isdir(save_dir):
         return None
-    files.sort(key=lambda p: int(os.path.basename(p).split('_')[-1].split('.')[0]))
-    return files[-1]
+
+    # Prefer explicit epoch checkpoints if present.
+    epoch_files = glob.glob(os.path.join(save_dir, 'checkpoint_epoch_*.pth.tar'))
+    if epoch_files:
+        epoch_files.sort(key=lambda p: int(os.path.basename(p).split('_')[-1].split('.')[0]))
+        return epoch_files[-1]
+
+    # Otherwise, search recursively for any common checkpoint format.
+    candidates = []
+    for pattern in ('**/model_best.pth.tar', '**/*.pth.tar', '**/*.pth', '**/*.pt'):
+        candidates.extend(glob.glob(os.path.join(save_dir, pattern), recursive=True))
+
+    if not candidates:
+        return None
+
+    candidates = [p for p in candidates if os.path.isfile(p)]
+    if not candidates:
+        return None
+
+    return max(candidates, key=os.path.getmtime)
+
+
+def find_latest_checkpoint_multi(search_dirs):
+    for d in search_dirs:
+        if not d:
+            continue
+        ckpt = find_latest_checkpoint(d)
+        if ckpt:
+            return ckpt
+    return None
 
 
 def build_loader(dataset, batch_size, workers, shuffle):
@@ -43,6 +69,80 @@ def to_train_targets(targets):
     targets = targets.clone()
     targets[targets == -1] = 0
     return targets
+
+
+def parse_gpu_ids(cfg, args_gpu_ids):
+    if args_gpu_ids:
+        return [int(x.strip()) for x in args_gpu_ids.split(',') if x.strip()]
+    gpu_ids = cfg.get('train', {}).get('gpu_ids', [0, 1])
+    return [int(x) for x in gpu_ids]
+
+
+def build_checkpoint_search_dirs(cfg, save_dir):
+    search_dirs = [save_dir]
+    search_dirs.extend(cfg.get('output', {}).get('resume_dirs', []))
+    # Common Kaggle locations used when copying checkpoints from input datasets.
+    search_dirs.extend([
+        '/kaggle/working/checkpoints/addgcn_baseline',
+    ])
+    unique_dirs = []
+    seen = set()
+    for d in search_dirs:
+        if d and d not in seen:
+            unique_dirs.append(d)
+            seen.add(d)
+    return unique_dirs
+
+
+def add_module_prefix(state_dict):
+    return {k if k.startswith('module.') else f'module.{k}': v for k, v in state_dict.items()}
+
+
+def strip_module_prefix(state_dict):
+    return {k[7:] if k.startswith('module.') else k: v for k, v in state_dict.items()}
+
+
+def load_model_state_dict(model, state_dict):
+    try:
+        model.load_state_dict(state_dict)
+        return
+    except RuntimeError:
+        pass
+
+    try:
+        model.load_state_dict(strip_module_prefix(state_dict))
+        return
+    except RuntimeError:
+        pass
+
+    model.load_state_dict(add_module_prefix(state_dict))
+
+
+def extract_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ('state_dict', 'model_state_dict', 'model'):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+    if isinstance(checkpoint, dict):
+        return checkpoint
+    raise ValueError('Unsupported checkpoint format: cannot find model state dict.')
+
+
+def load_checkpoint(resume_path, model, optimizer, device, evaluate_only=False):
+    checkpoint = torch.load(resume_path, map_location=device)
+    state_dict = extract_state_dict(checkpoint)
+    load_model_state_dict(model, state_dict)
+
+    start_epoch = 0
+    best_score = -1.0
+
+    if isinstance(checkpoint, dict):
+        if not evaluate_only and 'optimizer' in checkpoint and isinstance(checkpoint['optimizer'], dict):
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        start_epoch = checkpoint.get('epoch', -1) + 1
+        best_score = checkpoint.get('best_score', -1.0)
+
+    return start_epoch, best_score
 
 
 def evaluate_addgcn(model, loader, criterion, device):
@@ -89,9 +189,10 @@ def evaluate_addgcn(model, loader, criterion, device):
 
 
 def save_checkpoint(path, model, optimizer, epoch, best_score):
+    model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
     state = {
         'epoch': epoch,
-        'state_dict': model.state_dict(),
+        'state_dict': model_to_save.state_dict(),
         'optimizer': optimizer.state_dict(),
         'best_score': best_score,
     }
@@ -103,11 +204,16 @@ def main():
     parser.add_argument('--config', required=True, help='Path to baseline config YAML')
     parser.add_argument('--evaluate', action='store_true', help='Only run evaluation')
     parser.add_argument('--resume', default='', help='Checkpoint path for resume/eval')
+    parser.add_argument('--checkpoint', default='', help='Alias of --resume for checkpoint path')
     parser.add_argument('--subset', type=int, default=None, help='Use only N images for quick smoke-test')
+    parser.add_argument('--gpu-ids', default='', help='Comma-separated GPU ids, e.g. "0,1"')
+    parser.add_argument('--no-dp-fallback', action='store_true', help='Do not fallback to single GPU if DataParallel fails')
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    gpu_ids = parse_gpu_ids(cfg, args.gpu_ids)
+    available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 
     torch.manual_seed(cfg['seed'])
     torch.cuda.manual_seed_all(cfg['seed'])
@@ -160,9 +266,21 @@ def main():
         pretrained=cfg['model'].get('pretrained', True),
     ).to(device)
 
+    if device.type == 'cuda':
+        valid_gpu_ids = [i for i in gpu_ids if 0 <= i < available_gpus]
+        if len(valid_gpu_ids) >= 2:
+            model = torch.nn.DataParallel(model, device_ids=valid_gpu_ids)
+            print(f'Using DataParallel on GPUs: {valid_gpu_ids}')
+        else:
+            current_gpu = torch.cuda.current_device()
+            print(f'Using single GPU: {current_gpu}')
+    else:
+        print('CUDA not available. Running on CPU.')
+
     criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
+    model_for_optim = model.module if isinstance(model, torch.nn.DataParallel) else model
     optimizer = torch.optim.SGD(
-        model.get_config_optim(cfg['train']['lr'], cfg['train']['lrp']),
+        model_for_optim.get_config_optim(cfg['train']['lr'], cfg['train']['lrp']),
         lr=cfg['train']['lr'],
         momentum=cfg['train']['momentum'],
         weight_decay=cfg['train']['weight_decay'],
@@ -171,18 +289,25 @@ def main():
     save_dir = cfg['output']['save_dir']
     os.makedirs(save_dir, exist_ok=True)
 
+    checkpoint_search_dirs = build_checkpoint_search_dirs(cfg, save_dir)
+
     start_epoch = 0
     best_score = -1.0
 
-    resume_path = args.resume or find_latest_checkpoint(save_dir)
+    resume_path = args.checkpoint or args.resume or find_latest_checkpoint_multi(checkpoint_search_dirs)
     if resume_path and os.path.isfile(resume_path):
-        checkpoint = torch.load(resume_path, map_location=device)
-        model.load_state_dict(checkpoint['state_dict'])
-        if not args.evaluate and 'optimizer' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-        start_epoch = checkpoint.get('epoch', 0) + 1
-        best_score = checkpoint.get('best_score', -1.0)
+        start_epoch, best_score = load_checkpoint(
+            resume_path=resume_path,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+            evaluate_only=args.evaluate,
+        )
         print(f'Resumed from {resume_path} at epoch {start_epoch}')
+    elif not (args.checkpoint or args.resume):
+        print(f'No checkpoint found in: {checkpoint_search_dirs}')
+    elif args.checkpoint or args.resume:
+        raise FileNotFoundError(f'Checkpoint not found: {args.checkpoint or args.resume}')
 
     if args.evaluate:
         print('\n=== Validation ===')
@@ -211,7 +336,17 @@ def main():
             labels = labels.to(device)
 
             train_targets = to_train_targets(labels)
-            out1, out2 = model(imgs)
+            try:
+                out1, out2 = model(imgs)
+            except torch.AcceleratorError as e:
+                if isinstance(model, torch.nn.DataParallel) and not args.no_dp_fallback:
+                    print('DataParallel failed with AcceleratorError, falling back to single GPU (device 0).')
+                    print(f'AcceleratorError: {e}')
+                    model = model.module.to(device)
+                    model.train()
+                    out1, out2 = model(imgs)
+                else:
+                    raise
             logits = (out1 + out2) / 2.0
             loss = criterion(logits, train_targets)
 
@@ -229,7 +364,7 @@ def main():
         results = evaluate_addgcn(model, val_loader, criterion, device)
         print_metrics(results)
 
-        score = results['mean_auc'] if results['mean_auc'] is not None else (results['map'] or -1.0)
+        score = results['map'] if results['map'] is not None else -1.0
         running_best = max(best_score, score)
         ckpt_path = os.path.join(save_dir, f'checkpoint_epoch_{epoch}.pth.tar')
         save_checkpoint(ckpt_path, model, optimizer, epoch, running_best)
@@ -237,14 +372,14 @@ def main():
         if score > best_score:
             best_score = score
             save_checkpoint(os.path.join(save_dir, 'model_best.pth.tar'), model, optimizer, epoch, best_score)
-            print(f'New best score: {best_score:.4f}')
+            print(f'New best mAP: {best_score:.4f}')
 
         if val_unc_loader is not None:
             print('\n=== Validation (Uncertain split) ===')
             results_unc = evaluate_addgcn(model, val_unc_loader, criterion, device)
             print_metrics(results_unc)
 
-    print(f'Finished training. Best score = {best_score:.4f}')
+    print(f'Finished training. Best mAP = {best_score:.4f}')
 
 
 if __name__ == '__main__':

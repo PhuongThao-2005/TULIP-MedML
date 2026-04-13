@@ -83,18 +83,18 @@ class ADDGCN(nn.Module):
 
     def forward_classification_sm(self, x):
         x = self.fc(x)
-        x = x.view(x.size(0), x.size(1), -1)
+        x = x.flatten(2)
         x = x.topk(1, dim=-1)[0].mean(dim=-1)
         return x
 
     def forward_sam(self, x):
         mask = self.fc(x)
-        mask = mask.view(mask.size(0), mask.size(1), -1)
+        mask = mask.flatten(2)
         mask = torch.sigmoid(mask)
-        mask = mask.transpose(1, 2)
+        mask = mask.transpose(1, 2).contiguous()
 
         x = self.conv_transform(x)
-        x = x.view(x.size(0), x.size(1), -1)
+        x = x.flatten(2).contiguous()
         x = torch.matmul(x, mask)
         return x
 
@@ -108,8 +108,9 @@ class ADDGCN(nn.Module):
         z = v + z
 
         out2 = self.last_linear(z)
-        mask_mat = self.mask_mat.detach()
-        out2 = (out2 * mask_mat).sum(-1)
+        # mask_mat is identity in the original ADD-GCN implementation, so this is
+        # equivalent to (out2 * I).sum(-1) but avoids a fragile broadcast kernel.
+        out2 = out2.diagonal(dim1=1, dim2=2).contiguous()
 
         return out1, out2
 

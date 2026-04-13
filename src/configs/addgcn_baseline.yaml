@@ -17,6 +17,7 @@ train:
   epochs: 20
   batch_size: 16
   workers: 4
+  gpu_ids: [0, 1]
   lr: 0.05
   lrp: 0.1
   momentum: 0.9
