@@ -7,6 +7,8 @@ Tái dùng tối đa từ repo:
   - src/engine.py           → MultiLabelMAPEngine (không phải GCN version)
   - src/evaluate.py         → evaluate(), print_metrics() (giữ nguyên)
 
+Mỗi epoch: Val (official) rồi Val (Uncertain).
+
 KHÔNG dùng:
   - GCNMultiLabelMAPEngine  (CheXNet không có GCN)
   - word_vec / adj_file     (không cần)
@@ -248,6 +250,13 @@ def main():
         inp_name=cfg['data'].get('word_vec'),
         uncertain=uncertain_policy,
     )
+    # Val thứ hai (uncertain)
+    val_uncertain_ds = CheXpert(
+        root=root,
+        csv_file=cfg['data']['val_uncertain_csv'],
+        inp_name=cfg['data'].get('word_vec'),
+        uncertain='keep',
+    )
 
     if args.subset:
         n_val = max(50, args.subset // 9)
@@ -256,9 +265,11 @@ def main():
         print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
 
     # ── Model ─────────────────────────────────────────────────────────────────
+    mcfg = cfg['model']
     model = build_chexnet(
-        ckpt_path=cfg['model']['ckpt_path'],
-        num_classes=cfg['model']['num_classes'],
+        num_classes=mcfg['num_classes'],
+        pretrained=mcfg.get('pretrained', True),
+        ckpt_path=mcfg.get('ckpt_path'),  # optional; ignored — weights từ torchvision
     )
 
     # ── Loss & Optimizer ──────────────────────────────────────────────────────
@@ -291,8 +302,11 @@ def main():
     }
 
     engine     = CheXNetEngine(state)
-    best_score = engine.learning(model, criterion, train_ds, val_ds,
-                                 optimizer=optimizer)
+    best_score = engine.learning(
+        model, criterion, train_ds, val_ds,
+        val_uncertain_dataset=val_uncertain_ds,
+        optimizer=optimizer,
+    )
     print(f'\n[{cfg["name"]}] Training complete. Best val score = {best_score:.4f}')
 
     # ── Final evaluation ──────────────────────────────────────────────────────
@@ -314,9 +328,20 @@ def main():
         pin_memory=(device == 'cuda'),
     )
 
-    print('\n=== Final validation metrics (CheXNet) ===')
+    print('\n=== Final validation metrics (official val) ===')
     results = evaluate(raw_model, val_loader, device=device)
     print_metrics(results)
+
+    val_unc_loader = torch.utils.data.DataLoader(
+        val_uncertain_ds,
+        batch_size=state['batch_size'],
+        shuffle=False,
+        num_workers=state['workers'],
+        pin_memory=(device == 'cuda'),
+    )
+    print('\n=== Final validation (Uncertain split / val_2) ===')
+    results_unc = evaluate(raw_model, val_unc_loader, device=device)
+    print_metrics(results_unc)
 
 
 if __name__ == '__main__':
