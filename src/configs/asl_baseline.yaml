@@ -1,0 +1,39 @@
+#  ResNet-101 + GloVe + ASL  <- baseline with ASL
+name: ASL_baseline
+seed: 42
+
+data:
+  root:      /kaggle/input/datasets/ashery/chexpert
+  train_csv: /kaggle/working/TULIP-MedML/data/train_small_v2.csv
+  val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
+  val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
+  adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
+  uncertain: zeros   # remap -1 to 0 for ASL
+  img_size:  448
+
+model:
+  backbone:   resnet101
+  pretrained: true
+  gcn_in:     300
+  t:          0.4
+
+loss:
+  type:       asl
+  gamma_pos:  0.0
+  gamma_neg:  4.0
+  reduction:  'mean'
+
+train:
+  epochs:      20
+  batch_size:  16
+  lr:          0.01
+  lrp:         0.1
+  momentum:    0.9
+  weight_decay: 0.0001
+  epoch_step:  []
+  workers:     4
+
+output:
+  save_dir: /kaggle/working/checkpoints/asl
+  log_dir:  /kaggle/working/logs/asl

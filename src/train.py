@@ -15,6 +15,7 @@ from src.engine import GCNMultiLabelMAPEngine
 from src.models.gcn import gcn_resnet101, gcn_swin_t, gcn_swin_b
 from src.evaluate import evaluate, print_metrics
 from src.loss.ua_asl import UncertaintyAwareASL
+from src.loss.asl import AsymmetricLoss
 
 def load_cfg(path: str) -> dict:
     with open(path, encoding='utf-8') as f:
@@ -44,6 +45,13 @@ def build_criterion(cfg: dict) -> nn.Module:
             margin=loss_cfg.get('margin', 0.05),
             lambda_unc=loss_cfg.get('lambda_unc', 0.5),
             alpha=loss_cfg.get('alpha', 0.5),
+            reduction=loss_cfg.get('reduction', 'mean'),
+        )
+
+    if loss_type == 'asl':
+        return AsymmetricLoss(
+            gamma_pos=loss_cfg.get('gamma_pos', 0.0),
+            gamma_neg=loss_cfg.get('gamma_neg', 4.0),
             reduction=loss_cfg.get('reduction', 'mean'),
         )
 
