@@ -537,16 +537,16 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
         # Preserve original labels for evaluation (keeps -1 uncertain)
         self.state['target_gt'] = self.state['target'].clone()
 
-        loss_type = self.state.get('loss_type', 'bce')
+        loss_type = str(self.state.get('loss_type', 'bce')).lower()
 
-        if loss_type == 'bce':
-            # BCE không hiểu -1 → remap uncertain thành negative
+        if loss_type == 'ua_asl':
+            # UA-ASL xử lý uncertain trực tiếp, giữ -1.
+            self.state['target'] = self.state['target'].float()
+        else:
+            # BCE/ASL: remap uncertain (-1) thành negative (0) trước khi tính loss.
             target = self.state['target'].clone().float()
             target[target < 0] = 0.0
             self.state['target'] = target
-        else:
-            # ua_asl nhận -1 trực tiếp, chỉ cast float
-            self.state['target'] = self.state['target'].float()
 
         # Unpack (img, path)
         input = self.state['input']
