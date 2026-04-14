@@ -65,11 +65,12 @@ class AsymmetricLoss(nn.Module):
 
         # ── Aggregate ────────────────────────────────────────────────────────
         loss = targets * loss_pos + (1.0 - targets) * loss_neg   # element-wise
+        total_loss = loss.sum()
 
         if self.reduction == 'none':
             return loss
         if self.reduction == 'sum':
-            return loss.sum()
+            return total_loss
         if self.reduction == 'mean':
-            return loss.sum(dim=1).mean()
+            return total_loss / logits.size(0)
         raise ValueError(f'Unsupported reduction: {self.reduction!r}')

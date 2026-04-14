@@ -22,6 +22,8 @@ loss:
   type:       asl
   gamma_pos:  0.0
   gamma_neg:  4.0
+  margin:     0.05
+  disable_torch_grad_focal_loss: true
   reduction:  'mean'
 
 train:
