@@ -118,7 +118,8 @@ def main():
     # uncertain='keep' preserves -1 labels so evaluate.py can compute
     # AUC-uncertain.  The engine's on_start_batch remaps -1 → 0 for BCE loss
     # but keeps target_gt intact for evaluation.  Override via config if needed.
-    uncertain_policy = cfg['data'].get('uncertain', 'keep')
+    # Keep raw labels {-1,0,1} for all splits; engine/loss handles remap by loss_type.
+    uncertain_policy = 'keep'
 
     train_ds = CheXpert(
         root=root,
