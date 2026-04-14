@@ -71,5 +71,5 @@ class AsymmetricLoss(nn.Module):
         if self.reduction == 'sum':
             return loss.sum()
         if self.reduction == 'mean':
-            return loss.mean()
+            return loss.sum(dim=1).mean()
         raise ValueError(f'Unsupported reduction: {self.reduction!r}')

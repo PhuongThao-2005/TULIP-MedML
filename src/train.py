@@ -52,7 +52,11 @@ def build_criterion(cfg: dict) -> nn.Module:
         return AsymmetricLoss(
             gamma_pos=loss_cfg.get('gamma_pos', 0.0),
             gamma_neg=loss_cfg.get('gamma_neg', 4.0),
+            margin=loss_cfg.get('margin', 0.05),
             reduction=loss_cfg.get('reduction', 'mean'),
+            disable_torch_grad_focal_loss=loss_cfg.get(
+                'disable_torch_grad_focal_loss', True
+            ),
         )
 
     raise ValueError(f"Unsupported loss type: {loss_type}")
