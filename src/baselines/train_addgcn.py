@@ -19,7 +19,6 @@ def load_cfg(path):
     with open(path, encoding='utf-8') as f:
         return yaml.safe_load(f)
 
-
 def find_latest_checkpoint(save_dir):
     if not save_dir or not os.path.isdir(save_dir):
         return None
@@ -79,13 +78,12 @@ def parse_gpu_ids(cfg, args_gpu_ids):
 
 
 def build_checkpoint_search_dirs(cfg, save_dir):
-    search_dirs = [save_dir]
-    search_dirs.extend(cfg.get('output', {}).get('resume_dirs', []))
-    search_dirs.extend([
-        '/kaggle/working/checkpoints/add_gcn',
+    search_dirs = [
+        '/kaggle/input/notebooks/myvnthdim/notebook0de352a96d/checkpoints/addgcn_baseline',
         '/kaggle/working/checkpoints/addgcn_baseline',
-        '/kaggle/working/checkpoints/addgcn',
-    ])
+        save_dir,
+    ]
+    search_dirs.extend(cfg.get('output', {}).get('resume_dirs', []))
     unique_dirs = []
     seen = set()
     for d in search_dirs:
@@ -209,6 +207,8 @@ def main():
     parser.add_argument('--subset', type=int, default=None, help='Use only N images for quick smoke-test')
     parser.add_argument('--gpu-ids', default='', help='Comma-separated GPU ids, e.g. "0,1"')
     parser.add_argument('--no-dp-fallback', action='store_true', help='Do not fallback to single GPU if DataParallel fails')
+    parser.add_argument('--batch-size', type=int, default=None, help='Override batch size from config')
+    parser.add_argument('--force-single-gpu', action='store_true', help='Force training on single GPU (disable DataParallel)')
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
@@ -216,8 +216,18 @@ def main():
     gpu_ids = parse_gpu_ids(cfg, args.gpu_ids)
     available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 
+    # Workaround for CUDA/Kaggle misaligned address errors
+    if torch.cuda.is_available():
+        torch.backends.cudnn.enabled = False
+        print('(cuDNN disabled to avoid misaligned address errors)')
+
     torch.manual_seed(cfg['seed'])
     torch.cuda.manual_seed_all(cfg['seed'])
+
+    # Override batch size if specified
+    if args.batch_size:
+        cfg['train']['batch_size'] = args.batch_size
+        print(f'Batch size overridden to {args.batch_size}')
 
     train_ds = CheXpert(
         root=cfg['data']['root'],
@@ -268,13 +278,16 @@ def main():
     ).to(device)
 
     if device.type == 'cuda':
-        valid_gpu_ids = [i for i in gpu_ids if 0 <= i < available_gpus]
-        if len(valid_gpu_ids) >= 2:
-            model = torch.nn.DataParallel(model, device_ids=valid_gpu_ids)
-            print(f'Using DataParallel on GPUs: {valid_gpu_ids}')
+        if args.force_single_gpu:
+            print(f'Forced single GPU mode (--force-single-gpu)')
         else:
-            current_gpu = torch.cuda.current_device()
-            print(f'Using single GPU: {current_gpu}')
+            valid_gpu_ids = [i for i in gpu_ids if 0 <= i < available_gpus]
+            if len(valid_gpu_ids) >= 2:
+                model = torch.nn.DataParallel(model, device_ids=valid_gpu_ids)
+                print(f'Using DataParallel on GPUs: {valid_gpu_ids}')
+            else:
+                current_gpu = torch.cuda.current_device()
+                print(f'Using single GPU: {current_gpu}')
     else:
         print('CUDA not available. Running on CPU.')
 
@@ -339,17 +352,27 @@ def main():
             train_targets = to_train_targets(labels)
             try:
                 out1, out2 = model(imgs)
+                # Ensure tensor layout is contiguous after DataParallel
+                out1 = out1.contiguous()
+                out2 = out2.contiguous()
+                logits = (out1 + out2) / 2.0
+                loss = criterion(logits, train_targets)
             except torch.AcceleratorError as e:
                 if isinstance(model, torch.nn.DataParallel) and not args.no_dp_fallback:
-                    print('DataParallel failed with AcceleratorError, falling back to single GPU (device 0).')
-                    print(f'AcceleratorError: {e}')
+                    print('\n' + '='*80)
+                    print('DataParallel AcceleratorError detected, falling back to single GPU.')
+                    print(f'Error: {e}')
+                    print('='*80 + '\n')
+                    torch.cuda.empty_cache()
                     model = model.module.to(device)
                     model.train()
                     out1, out2 = model(imgs)
+                    out1 = out1.contiguous()
+                    out2 = out2.contiguous()
+                    logits = (out1 + out2) / 2.0
+                    loss = criterion(logits, train_targets)
                 else:
                     raise
-            logits = (out1 + out2) / 2.0
-            loss = criterion(logits, train_targets)
 
             optimizer.zero_grad()
             loss.backward()
@@ -361,7 +384,7 @@ def main():
 
         print(f'Train loss: {np.mean(losses):.4f}')
 
-        print('\n=== Validation ===')
+        print('\\n=== Validation ===')
         results = evaluate_addgcn(model, val_loader, criterion, device)
         print_metrics(results)
 
@@ -380,7 +403,50 @@ def main():
             results_unc = evaluate_addgcn(model, val_unc_loader, criterion, device)
             print_metrics(results_unc)
 
-    print(f'Finished training. Best mAP = {best_score:.4f}')
+    # ─────────────────────────────────────────────────────────────────────────
+    # FINAL RESULTS: Load best model and evaluate on all validation sets
+    # ─────────────────────────────────────────────────────────────────────────
+    print('\n' + '='*80)
+    print('FINAL RESULTS - Best Model Evaluation')
+    print('='*80)
+    
+    best_model_path = os.path.join(save_dir, 'model_best.pth.tar')
+    if os.path.isfile(best_model_path):
+        # Reload best model
+        start_epoch, _ = load_checkpoint(
+            resume_path=best_model_path,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+            evaluate_only=True,
+        )
+        
+        print(f'Loaded best model from {best_model_path}')
+        print(f'\n{"─"*80}')
+        print('Official Validation Set:')
+        print(f'{"─"*80}')
+        final_results = evaluate_addgcn(model, val_loader, criterion, device)
+        print_metrics(final_results)
+        
+        if val_unc_loader is not None:
+            print(f'\n{"─"*80}')
+            print('Uncertain Validation Set:')
+            print(f'{"─"*80}')
+            final_results_unc = evaluate_addgcn(model, val_unc_loader, criterion, device)
+            print_metrics(final_results_unc)
+        
+        print('\n' + '='*80)
+        print('FINAL SUMMARY')
+        print('='*80)
+        print(f'Best mAP:                    {final_results.get("map", "N/A"):.4f}' if final_results.get("map") is not None else f'Best mAP:                    N/A')
+        print(f'Best Mean AUC:               {final_results.get("mean_auc", "N/A"):.4f}' if final_results.get("mean_auc") is not None else f'Best Mean AUC:               N/A')
+        print(f'Best Uncertain AUC:          {final_results.get("unc_auc", "N/A"):.4f}' if final_results.get("unc_auc") is not None else f'Best Uncertain AUC:          N/A')
+        print(f'Validation Loss:             {final_results.get("loss", "N/A"):.4f}' if final_results.get("loss") is not None else f'Validation Loss:             N/A')
+        print(f'Best model saved to:         {best_model_path}')
+        print('='*80 + '\n')
+    else:
+        print(f'Best model not found at: {best_model_path}')
+        print(f'Final Best mAP = {best_score:.4f}')
 
 
 if __name__ == '__main__':
