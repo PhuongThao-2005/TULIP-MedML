@@ -261,6 +261,13 @@ class Engine:
                             if isinstance(v, torch.Tensor):
                                 state[k] = v.cuda()
 
+            sched = self.state.get('scheduler')
+            if (
+                sched is not None
+                and checkpoint.get('scheduler') is not None
+            ):
+                sched.load_state_dict(checkpoint['scheduler'])
+
             print(f"=> resumed from epoch {checkpoint['epoch']}")
         else:
             print("=> no checkpoint found, train from scratch")
@@ -275,28 +282,37 @@ class Engine:
 
         for epoch in range(self.state['start_epoch'], self.state['max_epochs']):
             self.state['epoch'] = epoch
-            lr = self.adjust_learning_rate(optimizer)
+            if self.state.get('skip_adjust_learning_rate'):
+                lr = np.unique([pg['lr'] for pg in optimizer.param_groups])
+            else:
+                lr = self.adjust_learning_rate(optimizer)
             print('lr:', lr)
 
             self.train(train_loader, model, criterion, optimizer, epoch)
             print("\n=== Val (Official) ===")
+            self.state['val_split'] = 'official'
             score = self.validate(val_loader, model, criterion)
 
             if val_unc_loader is not None:
                 print("\n=== Val (Uncertain) ===")
+                self.state['val_split'] = 'uncertain'
                 _ = self.validate(val_unc_loader, model, criterion)
 
             # Lưu checkpoint mỗi epoch, đánh dấu is_best nếu score tốt nhất
             is_best = score > self.state['best_score']
             self.state['best_score'] = max(score, self.state['best_score'])
-            self.save_checkpoint({
+            ckpt = {
                 'epoch'     : epoch,
                 'arch'      : self._state('arch'),
                 'state_dict': model.module.state_dict()
                                if hasattr(model, 'module') else model.state_dict(),
                 'best_score': self.state['best_score'],
                 'optimizer' : optimizer.state_dict(),
-            }, is_best)
+            }
+            sched = self.state.get('scheduler')
+            if sched is not None:
+                ckpt['scheduler'] = sched.state_dict()
+            self.save_checkpoint(ckpt, is_best)
             print('best score:', self.state['best_score'])
 
         return self.state['best_score']
