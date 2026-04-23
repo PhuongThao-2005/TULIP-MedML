@@ -22,7 +22,7 @@ loss:
   type: bce
 
 train:
-  epochs:      40
+  epochs:      30
   batch_size:  16
   lr:          0.01
   lrp:         0.1
