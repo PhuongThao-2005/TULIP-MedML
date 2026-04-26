@@ -1,3 +1,6 @@
+# Config: smoke test
+# Description: quick pipeline check with lightweight settings.
+
 name: C1_smoke_test
 seed: 42
 

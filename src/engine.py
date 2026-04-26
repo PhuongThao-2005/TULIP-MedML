@@ -1,3 +1,30 @@
+"""
+File: engine.py
+
+Description:
+    Core training engine for multi-label classification experiments.
+    Implements hook-based training/validation loops with checkpointing and metrics.
+
+Main Components:
+    - _AverageMeter: Running average helper.
+    - Engine: Base hook-driven train/validation workflow.
+    - MultiLabelMAPEngine: Extends Engine with AP meter logic.
+    - GCNMultiLabelMAPEngine: GCN-specific behavior for uncertain targets.
+
+Inputs:
+    - Datasets providing image tensors and targets.
+    - Model logits and loss criterion.
+
+Outputs:
+    - Trained checkpoints, logs, and validation metrics.
+
+Notes:
+    - Used by `src/train.py`.
+    - Target handling:
+        - BCE: remap uncertain target -1 -> 0
+        - UA-ASL: keep uncertain target as -1
+"""
+
 import os
 import shutil
 import time
@@ -8,8 +35,6 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-import torch.nn.parallel
-import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 
@@ -22,26 +47,39 @@ from src.evaluate import (
     print_metrics,
 )
 
-
 # ─── Running average ─────────────────────────────────────────────────────────
 
 class _AverageMeter:
-    """Running average — tracks loss across batches within one epoch."""
+    """
+    Track running average for scalar values.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Notes:
+        - Used for loss, batch time, and data time.
+    """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
+        """Reset accumulated statistics."""
         self.sum = 0.0
         self.count = 0
         self.avg = 0.0
 
     def add(self, val: float, n: int = 1):
+        """Add a new value with optional multiplicity."""
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
 
     def value(self):
+        """Return average in meter-compatible tuple format."""
         return (self.avg, 0.0)
 
 
@@ -49,20 +87,24 @@ class _AverageMeter:
 
 class Engine:
     """
-    Base training loop using a callback/hook pattern.
+    Generic training engine using hook-based design.
 
-    Subclasses override hooks rather than copy the full loop:
-        on_start_epoch → on_start_batch → on_forward → on_end_batch → on_end_epoch
-
-    GCNMultiLabelMAPEngine overrides on_start_batch (unpack tuple + remap
-    labels) and on_forward (single-input GCN forward pass — inp is a model
-    buffer, not a dataset field).
+    Notes:
+        - Subclasses override hooks instead of rewriting full loop.
+        - Hooks:
+            on_start_epoch → on_start_batch → on_forward → on_end_batch → on_end_epoch
     """
 
     def __init__(self, state: dict = {}):
+        """
+        Initialize engine state and logging.
+
+        Args:
+            state (dict): Runtime settings and mutable training state.
+        """
         self.state = state
 
-        # Configure logging if log_dir is provided
+        # Configure file logger if a log directory is provided.
         log_dir = self._state('log_dir')
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
@@ -75,59 +117,74 @@ class Engine:
             )
             self.logger = logging.getLogger(__name__)
         else:
-            # Fallback to console logging
+            # Fallback to console logger.
             logging.basicConfig(
                 level=logging.INFO,
                 format='%(asctime)s - %(levelname)s - %(message)s'
             )
             self.logger = logging.getLogger(__name__)
 
+        # default runtime configs
         defaults = {
             'use_gpu'     : torch.cuda.is_available(),
             'image_size'  : 224,
             'batch_size'  : 64,
             'workers'     : 4,
-            'device_ids'  : None,   # None → use all GPUs
-            'evaluate'    : False,  # True → validate only, no training
+            'device_ids'  : None,   # None means all visible GPUs.
+            'evaluate'    : False,  # True means validation-only mode.
             'start_epoch' : 0,
             'max_epochs' : 90,
-            'epoch_step'  : [],     # epochs at which to decay lr × 0.1
+            'epoch_step'  : [],     # Epoch milestones for LR decay.
             'use_pb'      : True,
             'print_freq'  : 0,
-            # 'loss_type' : 'bce'  ← caller sets this via state dict
+            # 'loss_type' is set by caller, e.g. 'bce' or 'ua_asl'.
         }
+
+        # fill missing config values
         for k, v in defaults.items():
             if self._state(k) is None:
                 self.state[k] = v
 
+        # initialize meters for tracking training dynamics
         self.state['meter_loss'] = _AverageMeter()
         self.state['batch_time'] = _AverageMeter()
         self.state['data_time']  = _AverageMeter()
 
     def _state(self, name):
+        """Read a value from engine state dictionary."""
         return self.state.get(name)
 
     # ── Hooks ────────────────────────────────────────────────────────────────
 
     def on_start_epoch(self, training, model, criterion, data_loader, optimizer=None, display=True):
+        """Hook called at the beginning of each epoch."""
         self.state['meter_loss'].reset()
         self.state['batch_time'].reset()
         self.state['data_time'].reset()
 
     def on_end_epoch(self, training, model, criterion, data_loader, optimizer=None, display=True):
+        """Hook called at the end of each epoch."""
         loss = self.state['meter_loss'].avg
+
         if display:
             tag = 'Epoch: [{0}]'.format(self.state['epoch']) if training else 'Test:'
             print(f'{tag}\tLoss {loss:.4f}')
+
         return loss
 
     def on_start_batch(self, training, model, criterion, data_loader, optimizer=None, display=True):
+        """Hook called before each batch forward pass."""
         pass
 
     def on_end_batch(self, training, model, criterion, data_loader, optimizer=None, display=True):
+        """Hook called after each batch forward/backward pass."""
+        # extract scalar loss from tensor
         self.state['loss_batch'] = self.state['loss'].item()
+        
+        # update running average loss
         self.state['meter_loss'].add(self.state['loss_batch'])
 
+        # optional logging for monitoring training stability
         if display and self.state['print_freq'] != 0 \
                 and self.state['iteration'] % self.state['print_freq'] == 0:
             loss = self.state['meter_loss'].avg
@@ -156,10 +213,21 @@ class Engine:
 
     def on_forward(self, training, model, criterion, data_loader,
                    optimizer=None, display=True):
-        input_var  = self.state['input']
-        target_var = self.state['target']
+        """
+        Default forward hook with optional backward/optimizer step.
 
-        self.state['output'] = model(input_var)
+        Shape:
+            input: model-dependent
+            targets: (B, C) for multi-label tasks
+            logits: (B, C)
+        """
+        input_var  = self.state['input']    # image_features: (B, 3, H, W)
+        target_var = self.state['target']   # targets: (B, C)
+
+        # forward pass: compute logits
+        self.state['output'] = model(input_var) # logits: (B, C)
+        
+        # compute loss between logits and targets
         self.state['loss']   = criterion(self.state['output'], target_var)
 
         if training:
@@ -171,9 +239,10 @@ class Engine:
 
     def init_learning(self, model, criterion):
         """
-        Tạo image transforms nếu chưa có.
-        Gọi mean/std từ model thay vì hardcode → mỗi backbone có thể dùng
-        chuẩn hóa khác nhau (ImageNet, BiomedCLIP, etc.)
+        Initialize train/validation transforms and reset best score.
+
+        Notes:
+            - Normalization stats are read from model attributes when available.
         """
         mean = getattr(model, 'image_normalization_mean', [0.485, 0.456, 0.406])
         std  = getattr(model, 'image_normalization_std',  [0.229, 0.224, 0.225])
@@ -201,8 +270,12 @@ class Engine:
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def learning(self, model, criterion, train_dataset, val_dataset, val_uncertain_dataset=None, optimizer=None):
+        """
+        Run full training loop with optional uncertain validation split.
+        """
         self.init_learning(model, criterion)
 
+        # attach transforms to dataset (decoupled design)
         train_dataset.transform = self.state['train_transform']
         train_dataset.target_transform = self._state('train_target_transform')
         val_dataset.transform   = self.state['val_transform']
@@ -215,6 +288,8 @@ class Engine:
             num_workers=self.state['workers'],
             pin_memory=self.state['use_gpu'],
         )
+        # train_loader batch:
+        #   image_features: (B, 3, H, W), targets: (B, C)
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=self.state['batch_size'],
@@ -236,14 +311,16 @@ class Engine:
                 pin_memory=self.state['use_gpu'],
             )
 
-        # Resume từ checkpoint nếu có
+        # Resume from explicit or auto-detected checkpoint.
         resume_path = self._state('resume')
 
-        #  AUTO RESUME nếu không có resume
+        # Auto-resume if no explicit path is provided.
         if resume_path is None:
+            # auto-find latest checkpoint to resume interrupted training
             resume_path = self.find_latest_checkpoint()
 
         if resume_path is not None and os.path.isfile(resume_path):
+            # restore training state (model + optimizer)
             print(f"=> loading checkpoint '{resume_path}'")
             checkpoint = torch.load(resume_path, map_location='cpu')
 
@@ -254,7 +331,8 @@ class Engine:
 
             if optimizer is not None and 'optimizer' in checkpoint:
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                
+          
+                # move optimizer states to GPU
                 if self.state['use_gpu']:
                     for state in optimizer.state.values():
                         for k, v in state.items():
@@ -273,6 +351,7 @@ class Engine:
             print("=> no checkpoint found, train from scratch")
 
         if self.state['use_gpu']:
+            # DataParallel keeps interface unchanged; model(...) still returns logits (B, C).
             model = torch.nn.DataParallel(
                 model, device_ids=self.state['device_ids']).cuda()
             
@@ -280,6 +359,7 @@ class Engine:
             self.validate(val_loader, model, criterion)
             return
 
+        # ── main training loop ──
         for epoch in range(self.state['start_epoch'], self.state['max_epochs']):
             self.state['epoch'] = epoch
             if self.state.get('skip_adjust_learning_rate'):
@@ -288,9 +368,13 @@ class Engine:
                 lr = self.adjust_learning_rate(optimizer)
             print('lr:', lr)
 
+            # training step
             self.train(train_loader, model, criterion, optimizer, epoch)
+
+            # validation step
             print("\n=== Val (Official) ===")
             self.state['val_split'] = 'official'
+            # `score` is used for best-checkpoint selection.
             score = self.validate(val_loader, model, criterion)
 
             if val_unc_loader is not None:
@@ -298,7 +382,7 @@ class Engine:
                 self.state['val_split'] = 'uncertain'
                 _ = self.validate(val_unc_loader, model, criterion)
 
-            # Lưu checkpoint mỗi epoch, đánh dấu is_best nếu score tốt nhất
+            # Save checkpoint each epoch, with best model tracking.
             is_best = score > self.state['best_score']
             self.state['best_score'] = max(score, self.state['best_score'])
             ckpt = {
@@ -318,6 +402,14 @@ class Engine:
         return self.state['best_score']
 
     def train(self, data_loader, model, criterion, optimizer, epoch):
+        """
+        Run one training epoch.
+
+        Shape:
+            image_features: (B, 3, H, W)
+            targets: (B, C)
+            logits: (B, C)
+        """
         model.train()
         self.on_start_epoch(True, model, criterion, data_loader, optimizer)
 
@@ -333,6 +425,7 @@ class Engine:
             self.state['input']  = input
             self.state['target'] = target
 
+            # Hook may remap uncertain targets depending on loss type.
             self.on_start_batch(True, model, criterion, data_loader, optimizer)
 
             if self.state['use_gpu']:
@@ -349,6 +442,15 @@ class Engine:
         self.on_end_epoch(True, model, criterion, data_loader, optimizer)
 
     def validate(self, data_loader, model, criterion):
+        """
+        Run one validation epoch.
+
+        Shape:
+            image_features: (B, 3, H, W)
+            targets: (B, C)
+            logits: (B, C)
+            probs: (B, C)
+        """
         model.eval()
         self.on_start_epoch(False, model, criterion, data_loader)
 
@@ -365,6 +467,7 @@ class Engine:
                 self.state['input']  = input
                 self.state['target'] = target
 
+            # Validation uses same hooks but with `training=False`.
                 self.on_start_batch(False, model, criterion, data_loader)
 
                 if self.state['use_gpu']:
@@ -381,6 +484,7 @@ class Engine:
         return self.on_end_epoch(False, model, criterion, data_loader)
 
     def save_checkpoint(self, state, is_best, filename=None):
+        """Save epoch checkpoint and update best-model files."""
         if filename is None:
             filename = f'checkpoint_epoch_{state["epoch"]}.pth.tar'
         if self._state('save_model_path') is not None:
@@ -410,7 +514,7 @@ class Engine:
                 shutil.copyfile(filename, filename_best)
                 self.state['filename_previous_best'] = filename_best
 
-        # giữ tối đa N checkpoint
+        # Keep only the latest N epoch checkpoints.
         max_keep = self.state.get('max_keep_ckpt', 5)
 
         import glob
@@ -429,10 +533,13 @@ class Engine:
 
     def adjust_learning_rate(self, optimizer):
         """
-        Decay lr × 0.1 tại mỗi epoch trong epoch_step.
-        Tính từ base_lrs gốc thay vì *= để tránh lỗi khi resume.
+        Apply step-wise learning-rate decay.
+
+        Notes:
+            - Decays LR by 0.1 at each milestone in `epoch_step`.
+            - Uses original base LRs to avoid resume drift.
         """
-        # Lưu lr gốc lần đầu tiên gọi
+        # Cache original LRs on first call.
         if 'base_lrs' not in self.state:
             self.state['base_lrs'] = [pg['lr'] for pg in optimizer.param_groups]
 
@@ -449,6 +556,7 @@ class Engine:
         return np.unique(lr_list)
     
     def find_latest_checkpoint(self):
+        """Find the latest epoch checkpoint in save directory."""
         import glob
 
         save_dir = self.state['save_model_path']
@@ -466,7 +574,7 @@ class Engine:
 
 class MultiLabelMAPEngine(Engine):
     """
-    Extends Engine với mAP metric cho multi-label classification.
+    Extend base Engine with AP meter for multi-label classification.
     """
 
     def __init__(self, state: dict):
@@ -478,12 +586,14 @@ class MultiLabelMAPEngine(Engine):
 
     def on_start_epoch(self, training, model, criterion, data_loader,
                        optimizer=None, display=True):
+        """Reset AP meter at epoch start."""
         Engine.on_start_epoch(self, training, model, criterion, data_loader,
                               optimizer)
         self.state['ap_meter'].reset()
 
     def on_end_epoch(self, training, model, criterion, data_loader,
                      optimizer=None, display=True):
+        """Report epoch mAP and loss."""
         map_val = 100.0 * self.state['ap_meter'].value().mean()
         loss    = self.state['meter_loss'].avg
         if display:
@@ -494,14 +604,16 @@ class MultiLabelMAPEngine(Engine):
 
     def on_start_batch(self, training, model, criterion, data_loader,
                        optimizer=None, display=True):
+        """Unpack batch and keep original targets for AP computation."""
         self.state['target_gt'] = self.state['target'].clone()
 
         input = self.state['input']
-        self.state['input'] = input[0]
+        self.state['input'] = input[0] # (B, 3, H, W)
         self.state['name']  = input[1]
 
     def on_end_batch(self, training, model, criterion, data_loader,
                      optimizer=None, display=True):
+        """Accumulate batch outputs/targets into AP meter."""
         Engine.on_end_batch(self, training, model, criterion, data_loader,
                             display=False)
         self.state['ap_meter'].add(
@@ -527,21 +639,18 @@ class MultiLabelMAPEngine(Engine):
 
 class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
     """
-    Extends MultiLabelMAPEngine cho GCNResnet.
+    GCN-specific multi-label engine with uncertainty-aware target handling.
 
-    Thay đổi chính so với phiên bản cũ:
-      1. inp KHÔNG còn trong dataset — model tự load qua register_buffer.
-         on_start_batch chỉ unpack (img, path), không cần lấy inp từ input[2].
-      2. on_start_batch có 2 nhánh remap label tùy loss_type:
-         - 'bce'    : -1 → 0  (uncertain coi như negative cho loss)
-         - 'ua_asl' : giữ nguyên -1 (loss tự xử lý)
-      3. on_forward gọi model(feature) một argument — inp là buffer trong model.
-      4. Checkpoint chọn theo mAP (khớp proposal), fallback mean_auc.
-      5. adjust_learning_rate tính từ base_lrs gốc, không lỗi khi resume.
+    Notes:
+        - Keeps original targets for evaluation metrics.
+        - Uses loss-dependent remapping strategy for uncertain targets:
+            - BCE: uncertain target -1 -> 0
+            - UA-ASL: keep uncertain target -1
     """
 
     def on_start_epoch(self, training, model, criterion, data_loader,
                        optimizer=None, display=True):
+        """Initialize per-epoch buffers; collect probs/targets during validation."""
         MultiLabelMAPEngine.on_start_epoch(
             self, training, model, criterion, data_loader, optimizer)
         if not training:
@@ -550,24 +659,24 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
 
     def on_start_batch(self, training, model, criterion, data_loader,
                        optimizer=None, display=True):
-        # Preserve original labels for evaluation (keeps -1 uncertain)
+        # Preserve original targets for metrics.
         self.state['target_gt'] = self.state['target'].clone()
 
         loss_type = self.state.get('loss_type', 'bce')
 
         if loss_type == 'bce':
-            # BCE không hiểu -1 → remap uncertain thành negative
+            # BCE expects binary targets, so map uncertain target -1 to 0.
             target = self.state['target'].clone().float()
             target[target < 0] = 0.0
             self.state['target'] = target
         else:
-            # ua_asl nhận -1 trực tiếp, chỉ cast float
+            # UA-ASL accepts uncertain target -1 directly.
             self.state['target'] = self.state['target'].float()
 
-        # Unpack (img, path)
+        # Unpack (image_features, path_strings).
         input = self.state['input']
-        self.state['feature'] = input[0]   # [B, 3, H, W]
-        self.state['out']     = input[1]   # list of path strings
+        self.state['feature'] = input[0]   # image_features: (B, 3, H, W)
+        self.state['out']     = input[1]   # metadata paths
 
     def on_end_batch(self, training, model, criterion, data_loader,
                      optimizer=None, display=True):
@@ -576,7 +685,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
 
         if not training:
             probs = torch.sigmoid(self.state['output']).detach().cpu().numpy()
-            # Dùng target_gt (giữ -1) để compute_AUC_uncertain hoạt động đúng
+            # Use original targets so uncertain AUC is computed correctly.
             gt    = self.state['target_gt'].detach().cpu().numpy()
             self.state['_val_scores'].append(probs)
             self.state['_val_targets'].append(gt)
@@ -594,7 +703,7 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             self.logger.info(f'Training Epoch {self.state["epoch"]} - Loss: {loss:.4f}, mAP: {map_val:.3f}')
             return map_val
 
-        # Validation
+        # Validation metrics.
         val_scores  = self.state.get('_val_scores',  [])
         val_targets = self.state.get('_val_targets', [])
 
@@ -602,17 +711,17 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
             print(f'Val:\tLoss {loss:.4f}  (no predictions collected)')
             return 0.0
 
-        scores  = np.concatenate(val_scores,  axis=0)   # [N, 14]
-        targets = np.concatenate(val_targets, axis=0)   # [N, 14] — có thể có -1
+        probs = np.concatenate(val_scores,  axis=0)   # probs: (N, C)
+        targets = np.concatenate(val_targets, axis=0) # targets: (N, C), includes -1
 
-        mAP, per_class_ap = compute_mAP(scores, targets)
-        mean_auc, per_cls = compute_mean_AUC(scores, targets)
-        unc_auc, per_class_unc_auc = compute_AUC_uncertain(scores, targets)
+        mAP, per_class_ap = compute_mAP(probs, targets)
+        mean_auc, per_cls = compute_mean_AUC(probs, targets)
+        unc_auc, per_class_unc_auc = compute_AUC_uncertain(probs, targets)
 
         results = {
             'map'          : round(mAP,      4) if not np.isnan(mAP)      else None,
             'mean_auc'     : round(mean_auc, 4) if not np.isnan(mean_auc) else None,
-            # unc_auc = nan là bình thường khi val set không có -1 (CheXpert official val)
+            # unc_auc can be NaN if split has no uncertain targets.
             'unc_auc'      : round(unc_auc,  4) if not np.isnan(unc_auc)  else None,
             'per_class_auc': per_cls,
             'per_class_ap' : per_class_ap,
@@ -626,22 +735,28 @@ class GCNMultiLabelMAPEngine(MultiLabelMAPEngine):
         # Log evaluation results
         self.logger.info(f'Validation Results - Loss: {loss:.4f}, mAP: {results["map"]}, Mean AUC: {results["mean_auc"]}, Unc AUC: {results["unc_auc"]}')
 
-        # Dùng mAP làm primary score để chọn checkpoint (khớp proposal).
-        # Fallback mean_auc nếu mAP không tính được.
+        # Use mAP as primary checkpoint score, fallback to mean AUC.
         score = mAP if not np.isnan(mAP) else (mean_auc if not np.isnan(mean_auc) else 0.0)
         return float(score)
 
     def on_forward(self, training, model, criterion, data_loader,
                    optimizer=None, display=True):
+        """
+        Forward/backward step for GCN model.
+
+        Shape:
+            image_features: (B, 3, H, W)
+            targets: (B, C)
+            logits: (B, C)
+        """
         feature_var = self.state['feature'].float()
         target_var  = self.state['target'].float()
 
         if self.state['use_gpu']:
             feature_var = feature_var.cuda()
 
-        # inp là register_buffer trong model — tự .cuda() cùng model,
-        # không cần truyền qua đây nữa
-        self.state['output'] = model(feature_var)   # logits [B, 14]
+        # Label embeddings are stored inside model buffer in this implementation.
+        self.state['output'] = model(feature_var)   # logits: (B, C)
         self.state['loss']   = criterion(self.state['output'], target_var)
 
         if training:

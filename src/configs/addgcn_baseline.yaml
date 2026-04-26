@@ -1,3 +1,6 @@
+# Config: ADD-GCN baseline
+# Description: Baseline ADD-GCN training setup for CheXpert.
+
 name: ADDGCN_Baseline
 seed: 1
 

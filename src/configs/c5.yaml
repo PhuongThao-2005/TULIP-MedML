@@ -1,4 +1,5 @@
-# C5: Swin-Base + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+# Config: C5 (full TULIP-MedML setup)
+# Description: Swin-Base + BioMedCLIP label embeddings + UA-ASL.
 name: C5_tulip_medml
 seed: 42
 
