@@ -1,0 +1,58 @@
+FINAL RESULTS - Best Model Evaluation
+================================================================================
+Loaded best model from /kaggle/working/checkpoints/addgcn_baseline/model_best.pth.tar
+
+────────────────────────────────────────────────────────────────────────────────
+Official Validation Set:
+────────────────────────────────────────────────────────────────────────────────
+                                                                                
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                            0.4332   0.8244      nan
+Enlarged Cardiomediastinum            0.5325   0.5697      nan
+Cardiomegaly                          0.4973   0.6899      nan
+Lung Opacity                          0.8417   0.8369      nan
+Lung Lesion                           0.0263   0.8412      nan
+Edema                                 0.6862   0.8882      nan
+Consolidation                         0.4794   0.8428      nan
+Pneumonia                             0.0668   0.6737      nan
+Atelectasis                           0.5643   0.7433      nan
+Pneumothorax                          0.1393   0.8219      nan
+Pleural Effusion                      0.7758   0.8603      nan
+Pleural Other                         1.0000   1.0000      nan
+Fracture                                 nan      nan      nan
+Support Devices                       0.8534   0.8878      nan
+-------------------------------------------------------------------
+Mean                                  0.5305   0.8062      nan
+
+────────────────────────────────────────────────────────────────────────────────
+Uncertain Validation Set:
+────────────────────────────────────────────────────────────────────────────────
+                                                                                
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                               nan      nan      nan
+Enlarged Cardiomediastinum            0.0692   0.5102   0.5058
+Cardiomegaly                          0.3846   0.8028   0.7393
+Lung Opacity                          0.7773   0.6627   0.6466
+Lung Lesion                           0.1417   0.7546   0.7364
+Edema                                 0.4890   0.7848   0.7598
+Consolidation                         0.1639   0.6591   0.5922
+Pneumonia                             0.1308   0.6712   0.6252
+Atelectasis                           0.3321   0.6904   0.6494
+Pneumothorax                          0.4620   0.8269   0.7704
+Pleural Effusion                      0.7841   0.8339   0.7631
+Pleural Other                         0.1451   0.7221   0.6817
+Fracture                              0.1016   0.6103   0.6455
+Support Devices                       0.8485   0.8463   0.8469
+-------------------------------------------------------------------
+Mean                                  0.3715   0.7212   0.6894
+
+================================================================================
+FINAL SUMMARY
+================================================================================
+Best mAP:                    0.5305
+Best Mean AUC:               0.8062
+Best Uncertain AUC:          N/A
+Validation Loss:             0.4534
+Best model saved to:         /kaggle/working/checkpoints/addgcn_baseline/model_best.pth.tar
