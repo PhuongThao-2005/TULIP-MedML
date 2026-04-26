@@ -68,7 +68,6 @@ TULIP-MedML/
 │   │   └── train_addgcn.py          # Train/eval baseline ADD-GCN
 │   │
 │   └── configs/                     # Các cấu hình huấn luyện
-│       ├── test.yaml                # Smoke test nhanh pipeline
 │       ├── c1.yaml                  # C1: Baseline ML-GCN
 │       ├── c2.yaml                  # C2: Thay backbone (Swin)
 │       ├── c3.yaml                  # C3: Node init BioMedCLIP
@@ -82,8 +81,7 @@ TULIP-MedML/
 ├── notebooks/
 │   └── tulip-medml-train.ipynb      # Notebook chính sử dụng để train các mô hình
 │   └── c5-grid-search.ipynb         # Notebook hỗ trợ thử nghiệm grid-search
-├── tests/
-│   └── test_ua_asl.py               # Unit test cho UA-ASL
+|   └── test_all_models_c1_c5_addgcn.ipynb # Notebook chạy test set cho tất cả model
 ├── requirements.txt                
 └── README.md                        
 ```
@@ -124,53 +122,7 @@ Các file cần có trong `data/` cho nhánh GCN:
 !pip install -q -r requirements.txt
 ```
 
-## 5.3 (Tùy chọn) Sinh file phụ trợ nếu thiếu
-
-Chỉ chạy bước này khi chưa có các file `adj`/`word_vec` trong `data/`.
-
-```python
-import sys
-sys.path.insert(0, "/kaggle/working/TULIP-MedML")
-
-from src.data.gen_chexpert_data import (
-    build_word_vectors,
-    build_adj_matrix,
-    gen_biomedclip_embeddings,
-)
-
-train_csv = "/kaggle/input/datasets/ashery/chexpert/train.csv"
-
-# Vector GloVe (nếu không có glove_path sẽ sinh random reproducible)
-build_word_vectors(
-    glove_path=None,
-    out_path="data/chexpert_glove_word2vec.npy"
-)
-
-# Ma trận đồng xuất hiện nhãn
-build_adj_matrix(
-    csv_path=train_csv,
-    out_path="data/chexpert_adj.pkl",
-    uncertain="zeros"
-)
-
-# Vector BioMedCLIP cho C3/C5
-gen_biomedclip_embeddings(
-    save_path="data/chexpert_biomedclip_vec.npy",
-    device="cuda"
-)
-```
-
-## 5.4 Chạy train smoke test (nên chạy trước)
-
-```bash
-!python src/train.py --config src/configs/test.yaml --subset 1000
-```
-
-Mục đích:
-- kiểm tra pipeline chạy được end-to-end,
-- tránh tốn thời gian chạy full khi còn lỗi path hoặc thiếu file.
-
-## 5.5 Chạy train chính thức (GCN)
+## 5.3 Chạy train chính thức (GCN)
 
 Ví dụ:
 
@@ -191,7 +143,7 @@ Lưu ý:
 - Script sẽ auto-resume từ checkpoint mới nhất trong `output.save_dir`.
 - Checkpoint và log mặc định lưu ở `/kaggle/working/checkpoints/...` và `/kaggle/working/logs/...`.
 
-## 5.6 Chạy baseline để so sánh
+## 5.4 Chạy baseline để so sánh
 
 CheXNet:
 
@@ -237,32 +189,21 @@ Kết quả in ra gồm:
 
 ---
 
-## 8) Kiểm thử
+## 8) Hướng dẫn cách chạy
 
-Chạy unit test cho loss:
-
-```bash
-!python -m pytest -q tests/test_ua_asl.py
-```
-
----
-
-## 9) Gợi ý quy trình làm việc ổn định
-
-1. Chạy `test.yaml --subset` trước.
-2. Xác nhận có đầy đủ file trong `data/`.
-3. Chạy config chính (C1/C5).
-4. Theo dõi checkpoint và log sau mỗi epoch.
-5. Chạy baseline để có mốc đối chiếu.
-6. Tổng hợp metric cuối cùng bằng output của `evaluate.py`.
+1. Xác nhận có đầy đủ file trong `data/`.
+2. Chạy config chính (C1/C5).
+3. Theo dõi checkpoint và log sau mỗi epoch.
+4. Chạy baseline để có mốc đối chiếu.
+5. Tổng hợp metric cuối cùng bằng output của `evaluate.py`.
 
 ---
 
-## 10) Tóm tắt nhanh
+## 9) Tóm tắt nhanh
 
   1) clone repo + `pip install -r requirements.txt`,
-  2) đảm bảo có `data/*.csv`, `data/chexpert_adj.pkl`, `data/*word2vec*.npy`,
-  3) chạy `src/train.py --config src/configs/test.yaml`,
-  4) chạy `src/train.py --config src/configs/c5.yaml`.
+  2) chạy `src/train.py --config src/configs/c5.yaml`.
 
-Chỉ cần theo đúng 4 bước trên là có thể train và lấy metric.
+Chỉ cần theo đúng 2 bước trên là có thể train và lấy metric.
+
+Ngoài ra, TULIP-MedML có web xây dựng để visualize kết quả đầu ra của baseline và TULIP-MedML: [TULIP-web](https://github.com/vandimmi/TULIPMedML-web)
