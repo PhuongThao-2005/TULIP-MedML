@@ -16,6 +16,15 @@ Dự án phân loại đa nhãn ảnh X-quang ngực (Chest X-ray) trên CheXper
   - khởi tạo semantic tốt hơn (GloVe/BioMedCLIP),
   - loss phù hợp dữ liệu y khoa có uncertain label (`UA-ASL`).
 
+### Nguồn tham khảo và baseline gốc
+- Baseline gốc của nhánh GCN trong dự án này là **ML-GCN**.
+- Source code tham khảo chính: [ML-GCN (megvii-research)](https://github.com/megvii-research/ML-GCN).
+- Các phần tham khảo gồm:
+  - ý tưởng kiến trúc multi-label dùng Graph Convolution để mô hình hóa quan hệ giữa nhãn,
+  - cách biểu diễn classifier theo embedding nhãn và tính logits theo hướng image feature x label node feature,
+  - quy trình huấn luyện/evaluate cho bài toán multi-label theo tinh thần ML-GCN.
+- Code trong repo này đã được điều chỉnh để phù hợp bài toán X-quang ngực (CheXpert), thêm baseline đối chiếu (CheXNet, ADD-GCN), mở rộng backbone (Swin) và thêm loss `UA-ASL` cho uncertain labels.
+
 ---
 
 ## 2) Kiến trúc tổng quan (nhánh GCN)
