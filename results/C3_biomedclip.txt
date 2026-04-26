@@ -1,0 +1,44 @@
+[C3_biomedclip] Training complete.  Best val score = 0.5302
+Loading best model from: /kaggle/working/checkpoints/c3/model_best.pth.tar
+
+=== Final validation metrics ===
+
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                            0.5227   0.8694      nan
+Enlarged Cardiomediastinum            0.7297   0.7532      nan
+Cardiomegaly                          0.6009   0.7908      nan
+Lung Opacity                          0.8945   0.8806      nan
+Lung Lesion                           0.0059   0.2790      nan
+Edema                                 0.6959   0.8939      nan
+Consolidation                         0.6727   0.9052      nan
+Pneumonia                             0.0962   0.6433      nan
+Atelectasis                           0.7209   0.8360      nan
+Pneumothorax                          0.1975   0.6510      nan
+Pleural Effusion                      0.8218   0.9056      nan
+Pleural Other                         0.0714   0.9442      nan
+Fracture                                 nan      nan      nan
+Support Devices                       0.8628   0.8820      nan
+-------------------------------------------------------------------
+Mean                                  0.5302   0.7873      nan
+
+=== Validation (Uncertain split) ===
+
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                               nan      nan      nan
+Enlarged Cardiomediastinum            0.0786   0.5612   0.4937
+Cardiomegaly                          0.2538   0.7186   0.6617
+Lung Opacity                          0.7491   0.6286   0.6103
+Lung Lesion                           0.1092   0.7214   0.7109
+Edema                                 0.4680   0.7827   0.7594
+Consolidation                         0.1474   0.6049   0.5967
+Pneumonia                             0.0836   0.7046   0.5700
+Atelectasis                           0.3235   0.6754   0.6112
+Pneumothorax                          0.2321   0.7114   0.6580
+Pleural Effusion                      0.7839   0.8351   0.7634
+Pleural Other                         0.0721   0.6891   0.6680
+Fracture                              0.1046   0.5646   0.6339
+Support Devices                       0.8088   0.8044   0.8061
+-------------------------------------------------------------------
+Mean                                  0.3242   0.6925   0.6572

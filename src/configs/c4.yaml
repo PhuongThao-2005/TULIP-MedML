@@ -1,4 +1,5 @@
-# C4: ResNet-101 + GloVe + UA-ASL  <- thay loss
+# Config: C4
+# Description: ResNet-101 + GloVe + uncertainty-aware ASL loss.
 name: C4_uaasl
 seed: 42
 
@@ -9,7 +10,7 @@ data:
   val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # UA-ASL nhận -1 trực tiếp, KHÔNG remap
+  uncertain: keep   # UA-ASL consumes uncertain target -1 directly.
   img_size:  448
 
 model:
@@ -19,7 +20,7 @@ model:
   t:          0.4
 
 loss:
-  type:       ua_asl   #  thay đổi duy nhất so với C1
+  type:       ua_asl   # Main change from C1: switch BCE -> UA-ASL.
   gamma_pos:  0.0
   gamma_neg:  4.0
   margin:     0.05
