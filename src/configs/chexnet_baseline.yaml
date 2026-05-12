@@ -1,4 +1,5 @@
-# configs/chexnet.yaml
+# Config: CheXNet baseline
+# Description: DenseNet121 baseline with BCE and plateau scheduler.
 
 name: "chexnet_baseline"
 seed: 42
@@ -23,20 +24,20 @@ loss:
 
 train:
   epochs:      20 
-  batch_size:  16           # ← paper gốc dùng 16
+  batch_size:  16           # Paper-aligned default batch size.
   
-  # Adam — giống paper gốc
+  # Adam optimizer (paper-aligned).
   optimizer:   "adam"
-  lr:          0.001        # ← paper gốc
-  beta1:       0.9          # ← paper gốc
-  beta2:       0.999        # ← paper gốc
+  lr:          0.001        # Paper-aligned LR.
+  beta1:       0.9          # Paper-aligned beta1.
+  beta2:       0.999        # Paper-aligned beta2.
 
-  # ReduceLROnPlateau — giống paper gốc ("decayed by 10 when val loss plateaus")
+  # ReduceLROnPlateau: decay by x10 when val loss plateaus.
   scheduler:   "plateau"
   lr_factor:   0.1
-  lr_patience: 3            # sau 3 epoch val loss không giảm → decay
-  lr_min:      1.0e-6       # floor để tránh lr → 0
-  epoch_step:  []           # không dùng adjust_learning_rate; LR do Plateau điều khiển
+  lr_patience: 3            # Decay after 3 plateau epochs.
+  lr_min:      1.0e-6       # Lower LR floor.
+  epoch_step:  []           # Unused; scheduler controls LR.
 
   workers: 2
 

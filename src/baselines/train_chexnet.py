@@ -1,365 +1,498 @@
-# train_chexnet.py
 """
-Training script cho CheXNet baseline trên CheXpert-small.
-
-Tái dùng tối đa từ repo:
-  - src/data/chexpert.py    → CheXpert dataset (giữ nguyên)
-  - src/engine.py           → MultiLabelMAPEngine (không phải GCN version)
-  - src/evaluate.py         → evaluate(), print_metrics() (giữ nguyên)
-
-Mỗi epoch: Val (official) rồi Val (Uncertain).
-
-KHÔNG dùng:
-  - GCNMultiLabelMAPEngine  (CheXNet không có GCN)
-  - word_vec / adj_file     (không cần)
-
-Cách chạy trên Kaggle:
-  !python train_chexnet.py --config configs/chexnet.yaml
-  !python train_chexnet.py --config configs/chexnet.yaml --subset 1000  # smoke test
+File: train_chexnet.py
+Description:
+    Training script for the CheXNet DenseNet-121 baseline on CheXpert.
+    Reuses the shared engine and evaluation utilities from the GCN codebase.
+Main Components:
+    - CheXNetEngine: Extends MultiLabelMAPEngine with CheXNet-specific forward
+      pass (no word vectors or GCN) and per-epoch AUC / mAP computation.
+    - main: Dataset construction, model instantiation, engine setup, and training.
+Inputs:
+    CheXpert images (B, 3, H, W); no word vectors or adjacency files needed.
+Outputs:
+    Per-epoch checkpoints and model_best.pth.tar in the configured save_dir.
+Notes:
+    - Model outputs logits; BCEWithLogitsLoss is used as the training criterion.
+    - Uncertain labels (-1) are remapped to 0 for BCE; kept as -1 for AUC eval.
+    - ReduceLROnPlateau scheduler steps on validation loss (not epoch count).
+    - Unlike GCNMultiLabelMAPEngine, this engine calls model(images) with
+      a single argument — no label embedding input.
+Usage:
+    python train_chexnet.py --config configs/chexnet.yaml
+    python train_chexnet.py --config configs/chexnet.yaml --subset 1000  # smoke test
 """
+
+from __future__ import annotations
 
 import argparse
+import glob
 import os
 import sys
-import glob
 
+import numpy as np
 import torch
 import torch.nn as nn
 import yaml
 
-# Repo root = parent of `src/` (this file lives in src/baselines/)
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Resolve repo root (parent of src/) so that src.* imports work from any CWD
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, _REPO_ROOT)
 
 from src.data.chexpert import CheXpert
-from src.evaluate import evaluate, print_metrics
-from src.models.chexnet import build_chexnet, NUM_CLASSES
 from src.engine import MultiLabelMAPEngine
+from src.evaluate import (
+    compute_AUC_uncertain,
+    compute_mAP,
+    compute_mean_AUC,
+    evaluate,
+    print_metrics,
+)
+from src.models.chexnet import NUM_CLASSES, build_chexnet
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  CheXNet Engine — extend MultiLabelMAPEngine
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Engine
 
 class CheXNetEngine(MultiLabelMAPEngine):
     """
-    Extend MultiLabelMAPEngine cho CheXNet (không có GCN).
+    Training engine for the CheXNet DenseNet-121 baseline.
 
-    Thay đổi so với GCNMultiLabelMAPEngine:
-      1. on_start_batch: unpack ((img, path), label) — giống GCN version
-         nhưng KHÔNG cần inp (word_vec) vì CheXNet là CNN thuần
-      2. on_forward: model(img) — 1 argument, không có word_vec
-      3. Xử lý uncertain: -1 → 0 cho BCE (giống C1 baseline)
-      4. Thu thập val scores để tính AUC — giống GCN version
+    Differences from GCNMultiLabelMAPEngine:
+      - on_start_batch: unpacks (images, paths) from the dataset's __getitem__
+        tuple, but does NOT extract label embeddings (CheXNet has no GCN branch).
+      - on_forward: calls model(images) with a single argument.
+      - on_end_batch: accumulates sigmoid probabilities and original targets
+        (including -1) for post-epoch AUC computation.
+      - on_end_epoch: computes mAP, mean AUC, and uncertain-aware AUC;
+        steps ReduceLROnPlateau on the official validation loss.
     """
 
-    def on_start_epoch(self, training, model, criterion, data_loader,
-                       optimizer=None, display=True):
+    def on_start_epoch(
+        self,
+        training: bool,
+        model: nn.Module,
+        criterion,
+        data_loader,
+        optimizer=None,
+        display: bool = True,
+    ) -> None:
         MultiLabelMAPEngine.on_start_epoch(
-            self, training, model, criterion, data_loader, optimizer)
+            self, training, model, criterion, data_loader, optimizer
+        )
+        # Initialize per-epoch accumulators for validation AUC computation
         if not training:
-            self.state['_val_scores']  = []
-            self.state['_val_targets'] = []
+            self.state["_val_probs"] = []
+            self.state["_val_targets"] = []
 
-    def on_start_batch(self, training, model, criterion, data_loader,
-                       optimizer=None, display=True):
-        # Giữ label gốc (có -1) cho evaluate
-        self.state['target_gt'] = self.state['target'].clone()
+    def on_start_batch(
+        self,
+        training: bool,
+        model: nn.Module,
+        criterion,
+        data_loader,
+        optimizer=None,
+        display: bool = True,
+    ) -> None:
+        # Preserve original targets (with -1) for AUC evaluation
+        self.state["target_gt"] = self.state["target"].clone()
 
-        # Remap uncertain -1 → 0 cho BCE loss (giống C1)
-        target = self.state['target'].clone().float()
-        target[target < 0] = 0.0
-        self.state['target'] = target
+        # Remap uncertain labels (-1) to 0 for BCEWithLogitsLoss
+        # (Giải thích: BCEWithLogitsLoss chỉ chấp nhận target ∈ {0, 1})
+        targets = self.state["target"].clone().float()
+        targets[targets < 0] = 0.0
+        self.state["target"] = targets
 
-        # Unpack ((img, path), label) — giống chexpert.py __getitem__
-        inp = self.state['input']
-        self.state['feature'] = inp[0]   # img tensor (B, 3, H, W)
-        self.state['name']    = inp[1]   # list of paths (không dùng)
+        # Unpack the (images, paths) tuple returned by CheXpertDataset.__getitem__
+        batch_input = self.state["input"]
+        self.state["feature"] = batch_input[0]  # images (B, 3, H, W)
+        self.state["name"] = batch_input[1]      # image paths (not used for training)
 
-    def on_end_batch(self, training, model, criterion, data_loader,
-                     optimizer=None, display=True):
+    def on_end_batch(
+        self,
+        training: bool,
+        model: nn.Module,
+        criterion,
+        data_loader,
+        optimizer=None,
+        display: bool = True,
+    ) -> None:
         MultiLabelMAPEngine.on_end_batch(
-            self, training, model, criterion, data_loader, display)
-
+            self, training, model, criterion, data_loader, display
+        )
+        # Accumulate predictions and original targets for validation AUC
         if not training:
-            probs = torch.sigmoid(self.state['output']).detach().cpu().numpy()
-            gt    = self.state['target_gt'].detach().cpu().numpy()
-            self.state['_val_scores'].append(probs)
-            self.state['_val_targets'].append(gt)
+            probs = torch.sigmoid(self.state["output"]).detach().cpu().numpy()
+            targets_gt = self.state["target_gt"].detach().cpu().numpy()
+            self.state["_val_probs"].append(probs)
+            self.state["_val_targets"].append(targets_gt)
 
-    def on_end_epoch(self, training, model, criterion, data_loader,
-                     optimizer=None, display=True):
-        import numpy as np
-        from src.evaluate import compute_mAP, compute_mean_AUC, compute_AUC_uncertain
+    def on_end_epoch(
+        self,
+        training: bool,
+        model: nn.Module,
+        criterion,
+        data_loader,
+        optimizer=None,
+        display: bool = True,
+    ) -> float:
+        """
+        Compute and log epoch-level metrics.
 
-        loss = self.state['meter_loss'].avg
+        For training: logs average loss and mAP from ap_meter.
+        For validation: computes mAP, mean AUC, and uncertain-aware AUC
+        from accumulated predictions; steps ReduceLROnPlateau scheduler.
+
+        Returns:
+            float: Epoch score used for best-model tracking
+                (mAP, or mean AUC as fallback).
+        """
+        loss = self.state["meter_loss"].avg
 
         if training:
-            map_val = 100.0 * self.state['ap_meter'].value().mean()
+            map_val = 100.0 * self.state["ap_meter"].value().mean()
             if display:
-                print(f'Epoch: [{self.state["epoch"]}]\t'
-                      f'Loss {loss:.4f}\tmAP {map_val:.3f}')
+                print(
+                    f'Epoch: [{self.state["epoch"]}]\t'
+                    f"Loss {loss:.4f}\tmAP {map_val:.3f}"
+                )
             self.logger.info(
-                f'Train Epoch {self.state["epoch"]} - Loss: {loss:.4f}, mAP: {map_val:.3f}'
+                f'Train Epoch {self.state["epoch"]} '
+                f"- Loss: {loss:.4f}, mAP: {map_val:.3f}"
             )
-            return map_val
+            return float(map_val)
 
-        # ── Validation ──
-        val_scores  = self.state.get('_val_scores', [])
-        val_targets = self.state.get('_val_targets', [])
+        # ── Validation Metrics ────────────────────────────────────────────────
+        val_probs = self.state.get("_val_probs", [])
+        val_targets = self.state.get("_val_targets", [])
 
-        if not val_scores:
-            print(f'Val:\tLoss {loss:.4f}  (no predictions)')
-            split = self.state.get('val_split', 'official')
+        if not val_probs:
+            if display:
+                print(f"Val:\tLoss {loss:.4f}  (no predictions)")
             self.logger.info(
-                f'Validation ({split}) - Loss: {loss:.4f}, no predictions'
+                f'Validation ({self.state.get("val_split", "official")}) '
+                f"- Loss: {loss:.4f}, no predictions"
             )
             return 0.0
 
-        scores  = np.concatenate(val_scores,  axis=0)
-        targets = np.concatenate(val_targets, axis=0)
+        # Stack accumulated predictions across batches
+        probs_np = np.concatenate(val_probs, axis=0)      # (N, C)
+        targets_np = np.concatenate(val_targets, axis=0)  # (N, C)
 
-        mAP,     per_ap  = compute_mAP(scores, targets)
-        mean_auc, per_auc = compute_mean_AUC(scores, targets)
-        unc_auc, per_unc  = compute_AUC_uncertain(scores, targets)
+        map_score, per_class_ap = compute_mAP(probs_np, targets_np)
+        mean_auc, per_class_auc = compute_mean_AUC(probs_np, targets_np)
+        unc_auc, per_class_unc = compute_AUC_uncertain(probs_np, targets_np)
 
         results = {
-            'map'              : round(mAP,      4) if not np.isnan(mAP)      else None,
-            'mean_auc'         : round(mean_auc, 4) if not np.isnan(mean_auc) else None,
-            'unc_auc'          : round(unc_auc,  4) if not np.isnan(unc_auc)  else None,
-            'per_class_auc'    : per_auc,
-            'per_class_ap'     : per_ap,
-            'per_class_unc_auc': per_unc,
+            "map": round(map_score, 4) if not np.isnan(map_score) else None,
+            "mean_auc": round(mean_auc, 4) if not np.isnan(mean_auc) else None,
+            "unc_auc": round(unc_auc, 4) if not np.isnan(unc_auc) else None,
+            "per_class_auc": per_class_auc,
+            "per_class_ap": per_class_ap,
+            "per_class_unc_auc": per_class_unc,
         }
 
         if display:
-            print(f'\nVal:\tLoss {loss:.4f}')
+            print(f"\nVal:\tLoss {loss:.4f}")
             print_metrics(results)
 
-        scheduler = self.state.get('scheduler')
-        val_split = self.state.get('val_split', 'official')
-        if scheduler is not None and val_split == 'official':
+        # Step ReduceLROnPlateau on the official validation split only
+        # (Giải thích: tránh step scheduler 2 lần khi có val_uncertain_split)
+        scheduler = self.state.get("scheduler")
+        val_split = self.state.get("val_split", "official")
+        if scheduler is not None and val_split == "official":
             scheduler.step(loss)
             if display:
-                lrs = [pg['lr'] for pg in scheduler.optimizer.param_groups]
-                print(f'  ReduceLROnPlateau: val_loss={loss:.4f}  lr={lrs}')
+                lrs = [pg["lr"] for pg in scheduler.optimizer.param_groups]
+                print(f"  ReduceLROnPlateau: val_loss={loss:.4f}  lr={lrs}")
 
         self.logger.info(
-            'Validation (%s) - Loss: %.4f, mAP: %s, Mean AUC: %s, Unc AUC: %s',
+            "Validation (%s) - Loss: %.4f, mAP: %s, Mean AUC: %s, Unc AUC: %s",
             val_split,
             loss,
-            results['map'],
-            results['mean_auc'],
-            results['unc_auc'],
+            results["map"],
+            results["mean_auc"],
+            results["unc_auc"],
         )
 
-        score = mAP if not np.isnan(mAP) else (mean_auc if not np.isnan(mean_auc) else 0.0)
+        # Use mAP as the primary score; fall back to mean AUC if NaN
+        score = (
+            map_score if not np.isnan(map_score)
+            else mean_auc if not np.isnan(mean_auc)
+            else 0.0
+        )
         return float(score)
 
-    def on_forward(self, training, model, criterion, data_loader,
-                   optimizer=None, display=True):
+    def on_forward(
+        self,
+        training: bool,
+        model: nn.Module,
+        criterion,
+        data_loader,
+        optimizer=None,
+        display: bool = True,
+    ) -> None:
         """
-        CheXNet forward: model nhận 1 argument (img tensor).
-        Khác GCNEngine vốn truyền model(img, word_vec).
+        CheXNet forward pass: single-argument model call (no label embeddings).
+
+        Args:
+            training (bool): Whether the engine is in training mode.
+            model (nn.Module): The CheXNet model.
+            criterion: Loss function (BCEWithLogitsLoss).
+            data_loader: Active data loader (unused here).
+            optimizer: Optimizer (used for gradient step during training).
+            display (bool): Whether to print progress.
+
+        Notes:
+            - Differs from GCNEngine which calls model(images, label_embeddings).
+            - Gradient clipping is applied before optimizer step.
         """
-        feature_var = self.state['feature'].float()
-        target_var  = self.state['target'].float()
+        images = self.state["feature"].float()
+        targets = self.state["target"].float()
 
-        if self.state['use_gpu']:
-            feature_var = feature_var.cuda()
-            target_var  = target_var.cuda()
+        if self.state["use_gpu"]:
+            images = images.cuda()
+            targets = targets.cuda()
 
-        self.state['output'] = model(feature_var)          # logits (B, 14)
-        self.state['loss']   = criterion(self.state['output'], target_var)
+        logits = model(images)                          # (B, num_classes)
+        self.state["output"] = logits
+        self.state["loss"] = criterion(logits, targets)
 
         if training:
             optimizer.zero_grad()
-            self.state['loss'].backward()
+            self.state["loss"].backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Helpers (tái dùng pattern từ train.py gốc)
-# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
 
-def load_cfg(path: str) -> dict:
-    with open(path, encoding='utf-8') as f:
+def _load_config(path: str) -> dict:
+    """Load a YAML configuration file and return its contents as a dict."""
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-def build_optimizer(model, cfg: dict) -> torch.optim.Optimizer:
-    train_cfg = cfg['train']
+def _build_optimizer(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
+    """
+    Construct an Adam optimizer for all model parameters.
+
+    Args:
+        model (nn.Module): The model whose parameters to optimize.
+        cfg (dict): Full configuration dictionary.
+
+    Returns:
+        torch.optim.Adam: Configured optimizer.
+    """
+    train_cfg = cfg["train"]
     return torch.optim.Adam(
-        model.parameters(),          # toàn bộ model, không chia lr
-        lr=train_cfg['lr'],          # 0.001
-        betas=(train_cfg['beta1'], train_cfg['beta2']),  # (0.9, 0.999)
+        model.parameters(),
+        lr=train_cfg["lr"],
+        betas=(train_cfg["beta1"], train_cfg["beta2"]),
     )
 
-def build_scheduler(optimizer, cfg: dict):
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    cfg: dict,
+) -> torch.optim.lr_scheduler.ReduceLROnPlateau | None:
     """
-    ReduceLROnPlateau — step sau mỗi val epoch với val loss (không phải mỗi train epoch).
-    Decay × factor khi val loss không giảm sau `patience` epoch.
+    Construct a ReduceLROnPlateau scheduler if configured.
+
+    The scheduler steps on validation loss after each epoch. Only the
+    official validation split triggers a step to avoid double-stepping
+    when an uncertain split is also evaluated.
+
+    Args:
+        optimizer: The optimizer to attach the scheduler to.
+        cfg (dict): Full configuration dictionary.
+
+    Returns:
+        ReduceLROnPlateau or None if scheduler type is not "plateau".
     """
-    train_cfg = cfg['train']
-    kind = train_cfg.get('scheduler', 'plateau')
-    if kind != 'plateau':
+    train_cfg = cfg["train"]
+    if train_cfg.get("scheduler", "plateau") != "plateau":
         return None
+
     kwargs = dict(
-        mode='min',
-        factor=train_cfg['lr_factor'],
-        patience=train_cfg['lr_patience'],
-        min_lr=train_cfg['lr_min'],
+        mode="min",
+        factor=train_cfg["lr_factor"],
+        patience=train_cfg["lr_patience"],
+        min_lr=train_cfg["lr_min"],
     )
     try:
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, **kwargs, verbose=True
         )
     except TypeError:
+        # Older PyTorch versions do not accept verbose= in ReduceLROnPlateau
         return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
 
-def find_latest_checkpoint(save_dir: str):
-    """Giống hàm trong train.py gốc - auto-resume."""
+
+def _find_latest_checkpoint(save_dir: str) -> str | None:
+    """
+    Find the most recent epoch checkpoint in save_dir for auto-resume.
+
+    Args:
+        save_dir (str): Directory containing checkpoint files.
+
+    Returns:
+        str or None: Path to the latest checkpoint, or None if none found.
+    """
     if not os.path.exists(save_dir):
         return None
-    pattern = os.path.join(save_dir, 'checkpoint_epoch_*.pth.tar')
-    files   = glob.glob(pattern)
+    pattern = os.path.join(save_dir, "checkpoint_epoch_*.pth.tar")
+    files = glob.glob(pattern)
     if not files:
         return None
-    files.sort(key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+    files.sort(
+        key=lambda x: int(os.path.basename(x).split("_")[-1].split(".")[0])
+    )
     return files[-1]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────────────────────────────────────
+# Main
 
-def main():
-    parser = argparse.ArgumentParser(description='Train CheXNet on CheXpert')
-    parser.add_argument('--config',    required=True,
-                        help='Path to YAML config (configs/chexnet.yaml)')
-    parser.add_argument('--subset',    type=int, default=None,
-                        help='Dùng N ảnh đầu — quick smoke-test')
-    parser.add_argument('--data_root', default=None,
-                        help='Override data.root trong config')
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Train CheXNet DenseNet-121 baseline on CheXpert."
+    )
+    parser.add_argument(
+        "--config", required=True,
+        help="Path to YAML config (e.g. configs/chexnet.yaml)"
+    )
+    parser.add_argument(
+        "--subset", type=int, default=None,
+        help="Use only N images — quick smoke-test"
+    )
+    parser.add_argument(
+        "--data_root", default=None,
+        help="Override data.root from config"
+    )
     args = parser.parse_args()
 
-    cfg  = load_cfg(args.config)
-    root = args.data_root or cfg['data']['root']
+    cfg = _load_config(args.config)
+    data_root = args.data_root or cfg["data"]["root"]
     print(f"Config: {cfg['name']}")
 
-    torch.manual_seed(cfg['seed'])
-    torch.cuda.manual_seed_all(cfg['seed'])
+    torch.manual_seed(cfg["seed"])
+    torch.cuda.manual_seed_all(cfg["seed"])
 
-    # ── Datasets ─────────────────────────────────────────────────────────────
-    # uncertain='keep' → giữ -1 để engine remap khi tính loss
-    # và evaluate.py compute unc_auc đúng
-    uncertain_policy = cfg['data'].get('uncertain', 'keep')
+    # ── Datasets ──────────────────────────────────────────────────────────────
+    # uncertain="keep" preserves -1 labels so the engine can remap them
+    # to 0 for BCE loss while keeping them intact for AUC evaluation.
+    uncertain_policy = cfg["data"].get("uncertain", "keep")
 
-    train_ds = CheXpert(
-        root=root,
-        csv_file=cfg['data']['train_csv'],
-        inp_name=cfg['data'].get('word_vec'),   # None cho CheXNet
+    train_dataset = CheXpert(
+        root=data_root,
+        csv_file=cfg["data"]["train_csv"],
+        inp_name=cfg["data"].get("word_vec"),  # None for CheXNet (no GCN)
         uncertain=uncertain_policy,
     )
-    val_ds = CheXpert(
-        root=root,
-        csv_file=cfg['data']['val_csv'],
-        inp_name=cfg['data'].get('word_vec'),
+    val_dataset = CheXpert(
+        root=data_root,
+        csv_file=cfg["data"]["val_csv"],
+        inp_name=cfg["data"].get("word_vec"),
         uncertain=uncertain_policy,
     )
-    # Val thứ hai (uncertain)
-    val_uncertain_ds = CheXpert(
-        root=root,
-        csv_file=cfg['data']['val_uncertain_csv'],
-        inp_name=cfg['data'].get('word_vec'),
-        uncertain='keep',
+    # Second validation split retaining uncertain labels for unc_auc metrics
+    val_uncertain_dataset = CheXpert(
+        root=data_root,
+        csv_file=cfg["data"]["val_uncertain_csv"],
+        inp_name=cfg["data"].get("word_vec"),
+        uncertain="keep",
     )
 
     if args.subset:
         n_val = max(50, args.subset // 9)
-        train_ds.df = train_ds.df.head(args.subset).reset_index(drop=True)
-        val_ds.df   = val_ds.df.head(n_val).reset_index(drop=True)
-        print(f'Subset mode: {len(train_ds)} train / {len(val_ds)} val')
+        train_dataset.df = train_dataset.df.head(args.subset).reset_index(drop=True)
+        val_dataset.df = val_dataset.df.head(n_val).reset_index(drop=True)
+        print(f"Subset mode: {len(train_dataset)} train / {len(val_dataset)} val")
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    mcfg = cfg['model']
+    model_cfg = cfg["model"]
     model = build_chexnet(
-        num_classes=mcfg['num_classes'],
-        pretrained=mcfg.get('pretrained', True),
-        ckpt_path=mcfg.get('ckpt_path'),  # optional; ignored — weights từ torchvision
+        num_classes=model_cfg["num_classes"],
+        pretrained=model_cfg.get("pretrained", True),
+        ckpt_path=model_cfg.get("ckpt_path"),  # accepted but intentionally ignored
     )
 
-    # ── Loss & Optimizer ──────────────────────────────────────────────────────
-    criterion = nn.BCEWithLogitsLoss()   # model output là logits
-    optimizer = build_optimizer(model, cfg)
-    scheduler = build_scheduler(optimizer, cfg)
+    # ── Loss, Optimizer, Scheduler ────────────────────────────────────────────
+    criterion = nn.BCEWithLogitsLoss()  # expects logits; sigmoid applied internally
+    optimizer = _build_optimizer(model, cfg)
+    scheduler = _build_scheduler(optimizer, cfg)
 
-    # ── Engine ────────────────────────────────────────────────────────────────
-    os.makedirs(cfg['output']['save_dir'], exist_ok=True)
-    os.makedirs(cfg['output']['log_dir'],  exist_ok=True)
+    # ── Engine Setup ──────────────────────────────────────────────────────────
+    os.makedirs(cfg["output"]["save_dir"], exist_ok=True)
+    os.makedirs(cfg["output"]["log_dir"], exist_ok=True)
 
-    resume_path = find_latest_checkpoint(cfg['output']['save_dir'])
-    print(f"Auto-resume: {resume_path}" if resume_path else "Train from scratch")
+    resume_path = _find_latest_checkpoint(cfg["output"]["save_dir"])
+    print(f"Auto-resume: {resume_path}" if resume_path else "Training from scratch")
 
-    state = {
-        'batch_size'        : cfg['train']['batch_size'],
-        'image_size'        : cfg['data']['img_size'],
-        'max_epochs'        : cfg['train']['epochs'],
-        'workers'           : cfg['train']['workers'],
-        'epoch_step'        : cfg['train'].get('epoch_step', []),
-        'save_model_path'   : cfg['output']['save_dir'],
-        'log_dir'           : cfg['output']['log_dir'],
-        'print_freq'        : 100,
-        'use_pb'            : True,
-        'difficult_examples': False,
-        'resume'            : resume_path,
-        'loss_type'         : cfg['loss']['type'],   # 'bce'
-        'scheduler'         : scheduler,
-        'skip_adjust_learning_rate': scheduler is not None,
+    engine_state = {
+        "batch_size": cfg["train"]["batch_size"],
+        "image_size": cfg["data"]["img_size"],
+        "max_epochs": cfg["train"]["epochs"],
+        "workers": cfg["train"]["workers"],
+        "epoch_step": cfg["train"].get("epoch_step", []),
+        "save_model_path": cfg["output"]["save_dir"],
+        "log_dir": cfg["output"]["log_dir"],
+        "print_freq": 100,
+        "use_pb": True,
+        "difficult_examples": False,
+        "resume": resume_path,
+        "loss_type": cfg["loss"]["type"],           # "bce"
+        "scheduler": scheduler,
+        # Skip engine's built-in LR step when ReduceLROnPlateau is active
+        "skip_adjust_learning_rate": scheduler is not None,
     }
 
-    engine     = CheXNetEngine(state)
+    engine = CheXNetEngine(engine_state)
     best_score = engine.learning(
-        model, criterion, train_ds, val_ds,
-        val_uncertain_dataset=val_uncertain_ds,
+        model,
+        criterion,
+        train_dataset,
+        val_dataset,
+        val_uncertain_dataset=val_uncertain_dataset,
         optimizer=optimizer,
     )
-    print(f'\n[{cfg["name"]}] Training complete. Best val score = {best_score:.4f}')
+    print(f"\n[{cfg['name']}] Training complete. Best val score = {best_score:.4f}")
 
-    # ── Final evaluation ──────────────────────────────────────────────────────
-    device    = 'cuda' if torch.cuda.is_available() else 'cpu'
-    raw_model = model.module if hasattr(model, 'module') else model
+    # ── Final Evaluation ──────────────────────────────────────────────────────
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    raw_model = model.module if hasattr(model, "module") else model
 
-    best_path = os.path.join(cfg['output']['save_dir'], 'model_best.pth.tar')
-    print(f'\nLoading best model from: {best_path}')
+    best_path = os.path.join(cfg["output"]["save_dir"], "model_best.pth.tar")
+    print(f"\nLoading best model from: {best_path}")
     checkpoint = torch.load(best_path, map_location=device)
-    raw_model.load_state_dict(checkpoint['state_dict'])
+    raw_model.load_state_dict(checkpoint["state_dict"])
 
-    # Dùng đúng evaluate() từ evaluate.py — giống C1/C5
-    # evaluate() nhận model(imgs) → tự gọi sigmoid bên trong
+    batch_size = engine_state["batch_size"]
+    num_workers = engine_state["workers"]
+    pin_memory = device == "cuda"
+
     val_loader = torch.utils.data.DataLoader(
-        val_ds,
-        batch_size=state['batch_size'],
+        val_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=state['workers'],
-        pin_memory=(device == 'cuda'),
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
+    print("\n=== Final validation metrics (official val split) ===")
+    final_results = evaluate(raw_model, val_loader, device=device)
+    print_metrics(final_results)
 
-    print('\n=== Final validation metrics (official val) ===')
-    results = evaluate(raw_model, val_loader, device=device)
-    print_metrics(results)
-
-    val_unc_loader = torch.utils.data.DataLoader(
-        val_uncertain_ds,
-        batch_size=state['batch_size'],
+    val_uncertain_loader = torch.utils.data.DataLoader(
+        val_uncertain_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=state['workers'],
-        pin_memory=(device == 'cuda'),
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
-    print('\n=== Final validation (Uncertain split / val_2) ===')
-    results_unc = evaluate(raw_model, val_unc_loader, device=device)
-    print_metrics(results_unc)
+    print("\n=== Final validation metrics (uncertain split) ===")
+    final_results_unc = evaluate(raw_model, val_uncertain_loader, device=device)
+    print_metrics(final_results_unc)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

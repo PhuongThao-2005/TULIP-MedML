@@ -1,3 +1,30 @@
+"""
+File: evaluate.py
+
+Description:
+    Evaluation utilities for multi-label CheXpert experiments.
+    This module computes mAP, mean AUC, and uncertain AUC.
+
+Main Components:
+    - _unpack_batch: Parse dataloader batch into tensors.
+    - compute_mAP: Compute mean AP over classes.
+    - compute_mean_AUC: Compute mean ROC-AUC over classes.
+    - compute_AUC_uncertain: Compute AUC on uncertain subset.
+    - evaluate: Run full inference and aggregate metrics.
+    - print_metrics: Print per-class and mean metrics.
+
+Inputs:
+    - logits from model forward pass
+    - targets in {-1, 0, 1}
+
+Outputs:
+    - Metric dictionary with scalar metrics and per-class tables
+
+Notes:
+    - Uses `logits` for raw model outputs and `probs` after sigmoid.
+    - Uses `targets` terminology for ground-truth labels.
+"""
+
 import torch
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score
@@ -6,254 +33,350 @@ from src.data.chexpert import CHEXPERT_CLASSES
 
 
 def _unpack_batch(batch):
+    """
+    Unpack a dataloader batch into image tensor, label embeddings, and targets.
+
+    Args:
+        batch (tuple | list): Batch from dataloader.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+            image_features, label_embeddings, targets
+
+    Shape:
+        image_features: (B, 3, H, W)
+        label_embeddings: (C, D) or (B, C, D), optional
+        targets: (B, C)
+
+    Notes:
+        - Accepts both plain tensor input and tuple/list input.
+    """
+    
+    # Ensure batch has the expected structure: (inputs, targets)
     if not isinstance(batch, (tuple, list)) or len(batch) != 2:
         raise ValueError('Expected batch format (input, target).')
 
-    inputs, labels = batch
-    imgs = None
-    word_vecs = None
+    inputs, targets = batch
+    image_features = None
+    label_embeddings = None
 
+    # Case 1: inputs is directly a tensor → treat as image tensor
     if torch.is_tensor(inputs):
-        imgs = inputs
+        image_features = inputs
+
+    # Case 2: inputs is a tuple/list → may contain additional info
     elif isinstance(inputs, (tuple, list)):
         if len(inputs) == 0:
             raise ValueError('Input tuple is empty.')
-        imgs = inputs[0]
+
+        # First element is always the image tensor
+        image_features = inputs[0]
+
+        # Try to extract label embeddings if present
         if len(inputs) >= 3 and torch.is_tensor(inputs[2]):
-            word_vecs = inputs[2]
+            label_embeddings = inputs[2]
         elif len(inputs) >= 2 and torch.is_tensor(inputs[1]):
-            word_vecs = inputs[1]
+            label_embeddings = inputs[1]
+
     else:
         raise ValueError(f'Unsupported input type: {type(inputs)}')
 
-    if not torch.is_tensor(labels):
-        labels = torch.as_tensor(labels)
+    # Ensure targets are tensors
+    if not torch.is_tensor(targets):
+        targets = torch.as_tensor(targets)
 
-    return imgs, word_vecs, labels
+    return image_features, label_embeddings, targets
 
 
-# ─────────────────────────────────────────────────────────
-# 1. mAP — exclude nhãn -1
-# ─────────────────────────────────────────────────────────
 def compute_mAP(
-    scores : np.ndarray,
+    probs: np.ndarray,
     targets: np.ndarray,
 ) -> tuple[float, dict]:
     """
-    scores:  [N, 14] sigmoid output
-    targets: [N, 14] {-1, 0, 1}
-    Bỏ sample có nhãn -1, chỉ tính trên {0, 1}.
+    Compute mean Average Precision across classes.
 
-    Trả về (mean_ap, per_class_dict) — khớp với compute_mean_AUC.
-    per_class_dict: {label_name: ap} để in bảng.
+    Args:
+        probs (np.ndarray): Sigmoid probabilities.
+        targets (np.ndarray): Ground-truth labels in {-1, 0, 1}.
+
+    Returns:
+        tuple[float, dict]: (mean_ap, per_class_ap)
+
+    Shape:
+        probs: (N, C)
+        targets: (N, C)
+
+    Notes:
+        - Ignores uncertain targets (`-1`) for AP computation.
+        - Requires at least one positive target per class.
     """
     per_class = {}
-    aps       = []
+    aps = []
 
-    for i, cls in enumerate(CHEXPERT_CLASSES):
-        t = targets[:, i]
-        s = scores[:, i]
+    for class_idx, class_name in enumerate(CHEXPERT_CLASSES):
+        targets_class = targets[:, class_idx]
+        probs_class = probs[:, class_idx]
 
-        mask = t != -1                      # bỏ uncertain
+        # Ignore uncertain targets for standard AP.
+        mask = targets_class != -1
         if mask.sum() == 0:
             continue
-        t_bin = (t[mask] == 1).astype(int)
-        if t_bin.sum() == 0:               # không có positive
+
+        # Convert to binary labels {0,1}
+        targets_binary = (targets_class[mask] == 1).astype(int)
+
+        # Skip if no positive samples exist
+        if targets_binary.sum() == 0:
             continue
 
         try:
-            ap = average_precision_score(t_bin, s[mask])
-            per_class[cls] = round(float(ap), 4)
+            # Compute Average Precision for this class
+            ap = average_precision_score(targets_binary, probs_class[mask])
+            per_class[class_name] = round(float(ap), 4)
             aps.append(ap)
         except ValueError:
             pass
 
+    # Mean AP across valid classes
     mean_ap = float(np.mean(aps)) if aps else float('nan')
     return mean_ap, per_class
 
 
-# ─────────────────────────────────────────────────────────
-# 2. mean AUC — bỏ nhãn không có dương tính
-# ─────────────────────────────────────────────────────────
 def compute_mean_AUC(
-    scores : np.ndarray,
+    probs: np.ndarray,
     targets: np.ndarray,
 ) -> tuple[float, dict]:
     """
-    Trả về (mean_auc, per_class_dict).
-    per_class_dict: {label_name: auc} để in bảng.
+    Compute mean ROC-AUC across valid classes.
+
+    Args:
+        probs (np.ndarray): Sigmoid probabilities.
+        targets (np.ndarray): Ground-truth labels in {-1, 0, 1}.
+
+    Returns:
+        tuple[float, dict]: (mean_auc, per_class_auc)
+
+    Shape:
+        probs: (N, C)
+        targets: (N, C)
+
+    Notes:
+        - Ignores uncertain targets (`-1`) for ROC-AUC.
+        - Requires both positive and negative examples per class.
     """
     per_class = {}
-    aucs      = []
+    aucs = []
 
-    for i, cls in enumerate(CHEXPERT_CLASSES):
-        t = targets[:, i]
-        s = scores[:, i]
+    for class_idx, class_name in enumerate(CHEXPERT_CLASSES):
+        targets_class = targets[:, class_idx]
+        probs_class = probs[:, class_idx]
 
-        mask = t != -1                      # bỏ uncertain
+        # Ignore uncertain targets for standard ROC-AUC.
+        mask = targets_class != -1
         if mask.sum() == 0:
             continue
-        t_bin = (t[mask] == 1).astype(int)
-        if t_bin.sum() == 0 or (1 - t_bin).sum() == 0:
-            continue                        # cần cả pos lẫn neg
+
+        targets_binary = (targets_class[mask] == 1).astype(int)
+        
+        # Require both positive and negative samples
+        if targets_binary.sum() == 0 or (1 - targets_binary).sum() == 0:
+            continue
 
         try:
-            auc = roc_auc_score(t_bin, s[mask])
-            per_class[cls] = round(float(auc), 4)
+            # Compute ROC-AUC
+            auc = roc_auc_score(targets_binary, probs_class[mask])
+            per_class[class_name] = round(float(auc), 4)
             aucs.append(auc)
         except ValueError:
             pass
 
+    # Mean AUC across valid classes
     mean_auc = float(np.mean(aucs)) if aucs else float('nan')
     return mean_auc, per_class
 
 
-# ─────────────────────────────────────────────────────────
-# 3. AUC uncertain — subset sample có ≥1 nhãn -1
-# ─────────────────────────────────────────────────────────
 def compute_AUC_uncertain(
-    scores : np.ndarray,
+    probs: np.ndarray,
     targets: np.ndarray,
 ) -> tuple[float, dict]:
     """
-    Chỉ tính trên subset sample có ít nhất 1 nhãn = -1.
-    Map uncertain (-1) → positive (1) khi evaluate.
+    Compute AUC on samples that contain uncertain targets.
 
-    Lý do: ảnh uncertain thường có dấu hiệu bệnh mờ nhạt
-    → model tốt phải cho score cao hơn ảnh âm tính rõ ràng
-    → nếu UA-ASL hoạt động đúng, unc_auc sẽ cao hơn BCE.
+    Args:
+        probs (np.ndarray): Sigmoid probabilities.
+        targets (np.ndarray): Ground-truth labels in {-1, 0, 1}.
 
-    Lưu ý: CheXpert official val set chỉ có {0, 1} → luôn trả nan.
-    Metric này chỉ có ý nghĩa khi eval trên train subset hoặc uncertain split.
+    Returns:
+        tuple[float, dict]: (mean_uncertain_auc, per_class_uncertain_auc)
+
+    Shape:
+        probs: (N, C)
+        targets: (N, C)
+
+    Notes:
+        - Selects rows containing at least one `-1`.
+        - Remaps `-1 -> 1` for this metric.
+        - Useful for uncertainty-aware training diagnostics.
     """
-    # Lấy subset có ít nhất 1 nhãn -1
+    # Select samples that contain at least one uncertain label (-1)
     has_uncertain = (targets == -1).any(axis=1)
     if has_uncertain.sum() == 0:
         return float('nan'), {}
 
-    s_unc = scores[has_uncertain]           # [M, 14]
-    t_unc = targets[has_uncertain].copy()   # [M, 14]
-    t_unc[t_unc == -1] = 1                  # uncertain → positive
+    # Filter only uncertain samples
+    probs_uncertain = probs[has_uncertain]                 # (M, C)
+    targets_uncertain = targets[has_uncertain].copy()      # (M, C)
+
+    # Convert uncertain labels (-1) → positive (1)
+    targets_uncertain[targets_uncertain == -1] = 1
 
     aucs = []
     per_class = {}
-    for i, cls in enumerate(CHEXPERT_CLASSES):
-        t_c = t_unc[:, i]
-        s_c = s_unc[:, i]
-        if t_c.sum() == 0 or (1 - t_c).sum() == 0:
+
+    for class_idx, class_name in enumerate(CHEXPERT_CLASSES):
+        targets_class = targets_uncertain[:, class_idx]
+        probs_class = probs_uncertain[:, class_idx]
+
+        # Require both positive and negative samples
+        if targets_class.sum() == 0 or (1 - targets_class).sum() == 0:
             continue
         try:
-            auc = roc_auc_score(t_c, s_c)
+            # Compute ROC-AUC
+            auc = roc_auc_score(targets_class, probs_class)
             aucs.append(auc)
-            per_class[cls] = round(float(auc), 4)
+            per_class[class_name] = round(float(auc), 4)
         except ValueError:
             pass
 
+    # Mean uncertain AUC
     mean_auc = float(np.mean(aucs)) if aucs else float('nan')
     return mean_auc, per_class
 
 
-# ─────────────────────────────────────────────────────────
-# Interface chính
-# ─────────────────────────────────────────────────────────
 def evaluate(model, loader, device='cuda') -> dict:
     """
-    Chạy inference toàn bộ loader, tính 3 metrics.
+    Run inference on a loader and compute summary metrics.
+
+    Args:
+        model (nn.Module): Trained model.
+        loader (DataLoader): Evaluation dataloader.
+        device (str): Compute device, e.g. 'cuda' or 'cpu'.
 
     Returns:
-        {
-            "map"          : float,
-            "mean_auc"     : float,
-            "unc_auc"      : float,
-            "per_class_auc": dict,   # {label: auc}
-            "per_class_ap" : dict,   # {label: ap}
-        }
+        dict: Metric dictionary including scalar and per-class metrics.
+
+    Shape:
+        image_features: (B, 3, H, W)
+        label_embeddings: (C, D) or (B, C, D), optional
+        logits: (B, C)
+        probs: (B, C)
+        targets: (B, C)
+
+    Notes:
+        - Uses `logits` for raw model outputs.
+        - Uses `probs = sigmoid(logits)` for metric computation.
     """
+
+    # Switch model to evaluation mode
     model.eval()
 
-    all_scores  = []
+    all_probs = []
     all_targets = []
 
-    with torch.no_grad():
+    with torch.no_grad():  # disable gradient computation for efficiency
         for batch in loader:
-            imgs, word_vecs, labels = _unpack_batch(batch)
+            # Unpack batch into image, label embeddings (optional), and targets
+            image_features, label_embeddings, targets = _unpack_batch(batch)
 
-            imgs      = imgs.to(device)
-            labels    = labels.to(device)
+            # Move data to device
+            image_features = image_features.to(device)
+            targets = targets.to(device)
 
-            if word_vecs is not None:
-                word_vecs = word_vecs.to(device)
-                logits = model(imgs, word_vecs)     # [B, 14]
+            # Forward pass (support both 1-input and 2-input models)
+            if label_embeddings is not None:
+                label_embeddings = label_embeddings.to(device)
+                # Two-input forward path (image + label embeddings).
+                logits = model(image_features, label_embeddings)
             else:
-                logits = model(imgs)                # [B, 14]
+                # One-input forward path (model stores label embeddings internally).
+                logits = model(image_features)
 
-            probs  = torch.sigmoid(logits)          # [B, 14]
+            # Convert logits → probabilities using sigmoid
+            probs = torch.sigmoid(logits)  # probs: (B, C)
 
-            all_scores.append(probs.cpu().numpy())
-            all_targets.append(labels.cpu().numpy())   # giữ nguyên {-1,0,1}
+            # Collect outputs for full-dataset evaluation
+            all_probs.append(probs.cpu().numpy())
+            all_targets.append(targets.cpu().numpy())
 
-    if not all_scores:
+    # Handle empty loader case
+    if not all_probs:
         return {
-            'map'          : None,
-            'mean_auc'     : None,
-            'unc_auc'      : None,
+            'map': None,
+            'mean_auc': None,
+            'unc_auc': None,
             'per_class_auc': {},
-            'per_class_ap' : {},
+            'per_class_ap': {},
             'per_class_unc_auc': {},
         }
 
-    scores  = np.concatenate(all_scores,  axis=0)  # [N, 14]
-    targets = np.concatenate(all_targets, axis=0)  # [N, 14]
+    # Concatenate all batches
+    probs = np.concatenate(all_probs, axis=0)
+    targets = np.concatenate(all_targets, axis=0)
 
-    map_score,  per_class_ap  = compute_mAP(scores, targets)
-    mean_auc,   per_class_auc = compute_mean_AUC(scores, targets)
-    unc_auc,    per_class_unc = compute_AUC_uncertain(scores, targets)
+    # Compute all evaluation metrics
+    map_score, per_class_ap = compute_mAP(probs, targets)
+    mean_auc, per_class_auc = compute_mean_AUC(probs, targets)
+    unc_auc, per_class_unc = compute_AUC_uncertain(probs, targets)
 
     return {
-        'map'          : round(map_score, 4) if not np.isnan(map_score) else None,
-        'mean_auc'     : round(mean_auc,  4) if not np.isnan(mean_auc)  else None,
-        'unc_auc'      : round(unc_auc,   4) if not np.isnan(unc_auc)   else None,
+        'map': round(map_score, 4) if not np.isnan(map_score) else None,
+        'mean_auc': round(mean_auc, 4) if not np.isnan(mean_auc) else None,
+        'unc_auc': round(unc_auc, 4) if not np.isnan(unc_auc) else None,
         'per_class_auc': per_class_auc,
-        'per_class_ap' : per_class_ap,
+        'per_class_ap': per_class_ap,
         'per_class_unc_auc': per_class_unc,
     }
 
 
-# ─────────────────────────────────────────────────────────
-# Print
-# ─────────────────────────────────────────────────────────
 def print_metrics(results: dict):
     """
-    In bảng Class | AUC | AP per-class, rồi các dòng tổng.
+    Print per-class and mean metric table.
+
+    Args:
+        results (dict): Output dictionary from `evaluate`.
+
+    Returns:
+        None
+
+    Shape:
+        - None (logging utility).
     """
     per_auc = results.get('per_class_auc', {})
-    per_ap  = results.get('per_class_ap',  {})
+    per_ap = results.get('per_class_ap', {})
     per_unc = results.get('per_class_unc_auc', {})
 
     print(f"\n{'Class':35s} {'AP':>8} {'AUC':>8} {'Unc_AUC':>8}")
     print('-' * 67)
 
-    for cls in CHEXPERT_CLASSES:
-        auc = per_auc.get(cls, float('nan'))
-        ap  = per_ap.get(cls,  float('nan'))
-        unc = per_unc.get(cls, float('nan'))
+    for class_name in CHEXPERT_CLASSES:
+        auc = per_auc.get(class_name, float('nan'))
+        ap = per_ap.get(class_name, float('nan'))
+        unc = per_unc.get(class_name, float('nan'))
 
         auc_str = f'{auc:.4f}' if not np.isnan(auc) else 'nan'
-        ap_str  = f'{ap:.4f}'  if not np.isnan(ap)  else 'nan'
+        ap_str = f'{ap:.4f}' if not np.isnan(ap) else 'nan'
         unc_str = f'{unc:.4f}' if not np.isnan(unc) else 'nan'
 
-        print(f'{cls:35s} {ap_str:>8} {auc_str:>8} {unc_str:>8}')
+        print(f'{class_name:35s} {ap_str:>8} {auc_str:>8} {unc_str:>8}')
 
-    # Separator
     print('-' * 67)
 
     mean_auc = results.get('mean_auc')
-    map_val  = results.get('map')
-    unc      = results.get('unc_auc')
+    map_val = results.get('map')
+    unc = results.get('unc_auc')
 
     mean_auc_str = 'nan' if mean_auc is None else f'{mean_auc:.4f}'
-    map_str      = 'nan' if map_val  is None else f'{map_val:.4f}'
-    unc_str      = 'nan' if unc is None else f'{unc:.4f}'
+    map_str = 'nan' if map_val is None else f'{map_val:.4f}'
+    unc_str = 'nan' if unc is None else f'{unc:.4f}'
 
-    # Mean line
     print(f"{'Mean':35s} {map_str:>8} {mean_auc_str:>8} {unc_str:>8}")

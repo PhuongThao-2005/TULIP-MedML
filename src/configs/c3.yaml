@@ -1,4 +1,5 @@
-# C3: ResNet-101 + BiomedCLIP init + BCE  <- thay node init
+# Config: C3
+# Description: ResNet-101 + BioMedCLIP label embeddings + BCE loss.
 name: C3_biomedclip
 seed: 42
 
@@ -7,7 +8,7 @@ data:
   train_csv: /kaggle/working/TULIP-MedML/data/train_small_v2.csv
   val_csv:   /kaggle/working/TULIP-MedML/data/valid.csv
   val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
-  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_biomedclip_vec.npy  # file khác
+  word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_biomedclip_vec.npy  # BioMedCLIP label embeddings.
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
   uncertain: keep
   img_size:  448
@@ -15,7 +16,7 @@ data:
 model:
   backbone:   resnet101
   pretrained: true
-  gcn_in:     512   # BiomedCLIP output 512 chiều
+  gcn_in:     512   # BioMedCLIP embedding dimension.
   t:          0.4
 
 loss:

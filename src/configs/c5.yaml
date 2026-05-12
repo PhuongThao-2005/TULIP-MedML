@@ -1,4 +1,5 @@
-# C5: Swin-T + BiomedCLIP + UA-ASL  <- TULIP-MedML đầy đủ
+# Config: C5 (full TULIP-MedML setup)
+# Description: Swin-Base + BioMedCLIP label embeddings + UA-ASL.
 name: C5_tulip_medml
 seed: 42
 
@@ -13,7 +14,7 @@ data:
   img_size:  224
 
 model:
-  backbone:   swin_t
+  backbone:   swin_b
   pretrained: true
   gcn_in:     512
   t:          0.4
@@ -29,13 +30,13 @@ loss:
   disable_torch_grad_focal_loss: True
 
 train:
-  epochs:      20
+  epochs:      30
   batch_size:  16
   lr:          0.01   
   lrp:         0.1
   momentum:    0.9
   weight_decay: 0.0001
-  epoch_step:  []
+  epoch_step:  [30]
   workers:     4
 
 output:

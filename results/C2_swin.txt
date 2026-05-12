@@ -1,0 +1,44 @@
+[C2_swin] Training complete.  Best val score = 0.5088
+Loading best model from: /kaggle/working/checkpoints/c2/model_best.pth.tar
+
+=== Final validation metrics ===
+
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                            0.5995   0.8874      nan
+Enlarged Cardiomediastinum            0.5570   0.6304      nan
+Cardiomegaly                          0.6409   0.7894      nan
+Lung Opacity                          0.8881   0.8832      nan
+Lung Lesion                           0.0063   0.3262      nan
+Edema                                 0.7305   0.9092      nan
+Consolidation                         0.5366   0.8700      nan
+Pneumonia                             0.0418   0.5171      nan
+Atelectasis                           0.6187   0.7688      nan
+Pneumothorax                          0.1612   0.8291      nan
+Pleural Effusion                      0.8436   0.9192      nan
+Pleural Other                         0.1667   0.9785      nan
+Fracture                                 nan      nan      nan
+Support Devices                       0.8233   0.8601      nan
+-------------------------------------------------------------------
+Mean                                  0.5088   0.7822      nan
+
+=== Validation (Uncertain split) ===
+
+Class                                     AP      AUC  Unc_AUC
+-------------------------------------------------------------------
+No Finding                               nan      nan      nan
+Enlarged Cardiomediastinum            0.0816   0.5656   0.5338
+Cardiomegaly                          0.4046   0.8004   0.7491
+Lung Opacity                          0.7608   0.6443   0.6234
+Lung Lesion                           0.2071   0.7926   0.7925
+Edema                                 0.5962   0.8059   0.7774
+Consolidation                         0.1397   0.6418   0.5877
+Pneumonia                             0.1258   0.7752   0.6324
+Atelectasis                           0.3593   0.7406   0.6819
+Pneumothorax                          0.5124   0.8176   0.7605
+Pleural Effusion                      0.7988   0.8549   0.7919
+Pleural Other                         0.1474   0.7973   0.6857
+Fracture                              0.0890   0.7236   0.7547
+Support Devices                       0.8293   0.8103   0.8107
+-------------------------------------------------------------------
+Mean                                  0.3886   0.7516   0.7063

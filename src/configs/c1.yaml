@@ -1,4 +1,5 @@
-# C1: ResNet-101 + GloVe + BCE  <- baseline
+# Config: C1 baseline
+# Description: ResNet-101 + GloVe label embeddings + BCE loss.
 name: C1_baseline
 seed: 42
 
@@ -9,7 +10,7 @@ data:
   val_uncertain_csv: /kaggle/working/TULIP-MedML/data/val_uncertain.csv
   word_vec:  /kaggle/working/TULIP-MedML/data/chexpert_glove_word2vec.npy
   adj:       /kaggle/working/TULIP-MedML/data/chexpert_adj.pkl
-  uncertain: keep   # giữ -1, engine tự remap cho BCE
+  uncertain: keep   # keep uncertain target -1; engine remaps for BCE training.
   img_size:  448
 
 model:

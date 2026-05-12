@@ -1,4 +1,5 @@
-# C5: Swin-T + BiomedCLIP + UA-ASL
+# Config: C5 Tulip variant
+# Description: C5 setup with grid-search metadata.
 name: C5_tulip_medml
 seed: 42
 
@@ -13,7 +14,8 @@ data:
   img_size:  224
 
 model:
-  backbone:   swin_t
+  # train.py uses this backbone; grid_search_c5.py may force Swin-T for lower VRAM.
+  backbone:   swin_b
   pretrained: true
   gcn_in:     512
   t:          0.4
@@ -40,7 +42,7 @@ train:
 
 grid_search:
   epochs_per_run: 5
-  gamma_neg:      [2, 4, 6]    # bỏ gamma_pos (fixed=0), thêm giá trị cao hơn cho imbalance nặng
+  gamma_neg:      [2, 4, 6]    # gamma_pos is fixed at 0; test stronger negative focusing.
   lambda_unc:     [0.3, 0.5, 0.7]
   alpha:          [0.3, 0.5] 
 
